@@ -1,5 +1,5 @@
 CC := gcc
-CFLAGS := -m32 -ggdb3 -ffreestanding -I. -nostdlib -fno-stack-protector -fno-pie -no-pie -fno-omit-frame-pointer
+CFLAGS := -m32 -ggdb3 -ffreestanding -Iinclude -nostdlib -fno-stack-protector -fno-pie -no-pie -fno-omit-frame-pointer
 
 AS := nasm
 ASFLAGS := -f elf32 -g
@@ -17,25 +17,25 @@ OBJS := $(patsubst $(SRCDIR)/%.c,$(OUTDIR)/%.o,$(wildcard $(SRCDIR)/*.c)) \
         $(patsubst $(SRCDIR)/%.asm,$(OUTDIR)/%.o,$(wildcard $(SRCDIR)/*.asm))
 
 $(OUTDIR)/%.o: $(SRCDIR)/%.c | $(OUTDIR)
-	$(CC) $(CFLAGS) -c -o $@ $<
+	@$(CC) $(CFLAGS) -c -o $@ $<
 
 $(OUTDIR)/%.o: $(SRCDIR)/%.asm | $(OUTDIR)
-	$(AS) $(ASFLAGS) -o $@ $<
+	@$(AS) $(ASFLAGS) -o $@ $<
 
 $(KERNEL): $(OBJS)
-	$(LD) $(LDFLAGS) -o $@ $^
+	@$(LD) $(LDFLAGS) -o $@ $^
 
 $(ISO): $(KERNEL) grub.cfg
-	mkdir -p iso/boot/grub/
-	cp grub.cfg iso/boot/grub/
-	cp $(KERNEL) iso/boot/
-	grub-mkrescue iso -o $@
+	@mkdir -p iso/boot/grub/
+	@cp grub.cfg iso/boot/grub/
+	@cp $(KERNEL) iso/boot/
+	@grub-mkrescue iso -o $@
 
 run: $(ISO)
-	qemu-system-i386 -m 512 -cdrom $<
+	@qemu-system-i386 -m 512 -cdrom $< $(QEMUEXTRA)
 
 clean:
-	rm -rf $(OUTDIR) $(ISO) $(KERNEL)
+	@rm -rf $(OUTDIR) $(ISO) $(KERNEL)
 
 $(OUTDIR):
-	mkdir -p $(OUTDIR)
+	@mkdir -p $(OUTDIR)

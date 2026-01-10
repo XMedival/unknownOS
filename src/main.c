@@ -1,54 +1,52 @@
-#include "../multiboot2.h"
-#include <stdint.h>
+#include <multiboot2.h>
+#include <x86.h>
+#include <types.h>
+#include <string.h>
+#include <serial.h>
+#include <kalloc.h>
 
 #define CHECK_FLAG(flags, bit)) ((flags) & (1 << (bit)))
 
-#define ATTRIBUTE 7
-
-#define COLUMNS 80
-#define LINES 24
-#define FRAMEBUFFER_ADDR 0xB8000
-
-typedef struct __attribute__((packed)) {
-  uint32_t total_size;
-  uint32_t reserved;
+struct multiboot_info {
+  uint total_size;
+  uint reserved;
   struct multiboot_tag tags[0];
-} multiboot_info;
+}__attribute__((aligned(MULTIBOOT_INFO_ALIGN)));
 
-typedef struct __attribute__((packed, aligned(MULTIBOOT_HEADER_ALIGN))) {
+
+#define MULTIBOOT_HEADER_LENGTH (uint)sizeof(header)
+
+__attribute__((section(".multiboot2_header"), used,  aligned(MULTIBOOT_HEADER_ALIGN)))
+const struct {
   struct multiboot_header header;
-  struct multiboot_header_tag end_tag;
-} header_t;
-
-#define MULTIBOOT_HEADER_LENGTH (uint32_t)sizeof(header_t)
-
-__attribute__((section(".multiboot2_header"), used, aligned(MULTIBOOT_HEADER_ALIGN)))
-const header_t header = {
+  struct multiboot_header_tag_console_flags cflags __attribute__((aligned(MULTIBOOT_HEADER_ALIGN)));
+  struct multiboot_header_tag end_tag __attribute__((aligned(MULTIBOOT_HEADER_ALIGN)));
+} header = {
   .header = {
     .magic = MULTIBOOT2_HEADER_MAGIC,
     .architecture = MULTIBOOT_ARCHITECTURE_I386,
     .header_length = MULTIBOOT_HEADER_LENGTH,
-    .checksum = -(MULTIBOOT2_HEADER_MAGIC + MULTIBOOT_ARCHITECTURE_I386 + MULTIBOOT_HEADER_LENGTH),
+    .checksum = 0 - (MULTIBOOT2_HEADER_MAGIC + MULTIBOOT_ARCHITECTURE_I386 + sizeof(header)),
+  },
+  .cflags = {
+    .type = MULTIBOOT_HEADER_TAG_CONSOLE_FLAGS,
+    .flags = 0,
+    .size = sizeof(struct multiboot_header_tag_console_flags),
+    .console_flags = 3,
   },
   .end_tag = {
     .type = MULTIBOOT_TAG_TYPE_END,
     .flags = 0,
     .size = sizeof(struct multiboot_header_tag),
-  }
-}; 
+  },
+};
 
-static int xpos;
-static int ypos;
-static volatile unsigned char *video;
-multiboot_info *mbi;
-
-static void hlt();
-static void cls();
-static void out(unsigned char val, int port);
-static char in(int port);
-static void itoa(char *buf, int base, int d);
-static void putchar(int c);
-void printf(const char *format, ...);
+uint xpos;
+uint ypos;
+volatile uchar *video;
+uint start;
+extern char end[];
+struct multiboot_info *mbi;
 
 // ------------------------------------------------------------
 
@@ -61,13 +59,14 @@ void _start() {
         printf("Invalid magic number: 0x%x\n", (unsigned) magic);
         hlt();
     }
-    mbi = (multiboot_info *) addr;
+    mbi = (struct multiboot_info *) addr;
+    serial_init();
     cls();
-    printf("\nHSH --- The HardWare Shell\n");
-    printf("================================\n");
+    printf("\nUnknownOS --- The OS nobody knows about\n");
+    printf("=======================================\n");
     for (int i = 0;;) {
-      uint32_t type = mbi->tags[i].type;
-      uint32_t size = mbi->tags[i].size;
+      uint type = mbi->tags[i].type;
+      uint size = mbi->tags[i].size;
       if (type == 0) {
         break;
       } else if (type == 1) {
@@ -78,180 +77,23 @@ void _start() {
         printf("Bootloader Name: %s\n", boot_name->string);
       } else if (type == 6) {
         struct multiboot_tag_mmap *mmap_tag = (struct multiboot_tag_mmap*)&mbi->tags[i];
-        uintptr_t p   = (uintptr_t)mmap_tag->entries;
-        uintptr_t end = (uintptr_t)mmap_tag + mmap_tag->size;
+        uchar *p   = (uchar*)mmap_tag->entries;
+        uchar *end = (uchar*)mmap_tag + mmap_tag->size;
 
-        int available_mem = 0;
         while (p < end) {
             struct multiboot_mmap_entry *e = (struct multiboot_mmap_entry *)p;
-            if (e->type == 1) {
-              available_mem+=e->len;
-            }
-            p += mmap_tag->entry_size; // advance by entry_size, not sizeof(struct)
+            if (e->type == 1) 
+              freerange((void*)e->addr, (void*)(e->addr + e->len));
+            p += mmap_tag->entry_size;
         }
-        printf("Available Memory: %d MB\n", (available_mem / 1024) / 1024);
+        ulong available_mem = freemem();
+        if (available_mem != 0) printf("Available Memory: %d KB\n", (available_mem * 4096) / 1024);
+      } else if (type == 21) {
+        struct multiboot_tag_load_base_addr *load_addr = (struct multiboot_tag_load_base_addr*)&mbi->tags[i];
+        start = load_addr->load_base_addr;
       }
       i++;
       i+=size/sizeof(struct multiboot_tag);
     }
     hlt();
-}
-
-// ------------------------------------------------------------
-
-static void hlt() {
-    asm volatile("cli\n" "hlt\n");
-}
-
-static void cls (void) {
-  int i;
-
-  // video = (unsigned char *) mbi->framebuffer_addr;
-  video = (unsigned char *) FRAMEBUFFER_ADDR;
-  
-  for (i = 0; i < COLUMNS * LINES * 2; i++)
-    *(video + i) = 0;
-
-  xpos = 0;
-  ypos = 0;
-}
-
-static void itoa (char *buf, int base, int d) {
-  char *p = buf;
-  char *p1, *p2;
-  unsigned long ud = d;
-  int divisor = 10;
-  
-  /* If %d is specified and D is minus, put ‘-’ in the head. */
-  if (base == 'd' && d < 0)
-    {
-      *p++ = '-';
-      buf++;
-      ud = -d;
-    }
-  else if (base == 'x')
-    divisor = 16;
-
-  /* Divide UD by DIVISOR until UD == 0. */
-  do
-    {
-      int remainder = ud % divisor;
-      
-      *p++ = (remainder < 10) ? remainder + '0' : remainder + 'a' - 10;
-    }
-  while (ud /= divisor);
-
-  /* Terminate BUF. */
-  *p = 0;
-  
-  /* Reverse BUF. */
-  p1 = buf;
-  p2 = p - 1;
-  while (p1 < p2)
-    {
-      char tmp = *p1;
-      *p1 = *p2;
-      *p2 = tmp;
-      p1++;
-      p2--;
-    }
-}
-
-static void out(unsigned char val, int port) {
-  asm volatile ("out %0, %w1" : : "a"(val), "Nd"(port));
-}
-
-static char in(int port) {
-  char val;
-  asm volatile ("in %w1, %0" : "=a"(val) : "Nd"(port));
-  return val;
-}
-
-static void putchar (int c) {
-  if (c == '\n')
-    {
-    newline:
-      out('\r', 0x3F8);
-      out(c, 0x3F8);
-      xpos = 0;
-      ypos++;
-      if (ypos >= LINES)
-        ypos = 0;
-      return;
-    }
-  if (c == '\r')
-    {
-    carriage_ret:
-      out(c, 0x3F8);
-      xpos = 0;
-      return;
-    }
-
-  *(video + (xpos + ypos * COLUMNS) * 2) = c & 0xFF;
-  *(video + (xpos + ypos * COLUMNS) * 2 + 1) = ATTRIBUTE;
-  out(c, 0x3F8);
-
-  xpos++;
-  if (xpos >= COLUMNS)
-    goto newline;
-}
-
-void printf (const char *format, ...) {
-  char **arg = (char **) &format;
-  int c;
-  char buf[20];
-
-  arg++;
-  
-  while ((c = *format++) != 0)
-    {
-      if (c != '%')
-        putchar (c);
-      else
-        {
-          char *p, *p2;
-          int pad0 = 0, pad = 0;
-          
-          c = *format++;
-          if (c == '0')
-            {
-              pad0 = 1;
-              c = *format++;
-            }
-
-          if (c >= '0' && c <= '9')
-            {
-              pad = c - '0';
-              c = *format++;
-            }
-
-          switch (c)
-            {
-            case 'd':
-            case 'u':
-            case 'x':
-              itoa (buf, c, *((int *) arg++));
-              p = buf;
-              goto string;
-              break;
-
-            case 's':
-              p = *arg++;
-              if (! p)
-                p = "(null)";
-
-            string:
-              for (p2 = p; *p2; p2++);
-              for (; p2 < p + pad; p2++)
-                putchar (pad0 ? '0' : ' ');
-              while (*p)
-                putchar (*p++);
-              break;
-
-            default:
-              putchar (*((int *) arg++));
-              break;
-            }
-        }
-    }
 }

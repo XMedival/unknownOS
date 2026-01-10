@@ -1,0 +1,40 @@
+[
+  {
+    "file": "src/main.c",
+    "arguments": [
+      "gcc",
+      "-m32",
+      "-ggdb3",
+      "-ffreestanding",
+      "-Iinclude",
+      "-fno-stack-protector",
+      "-fno-pie",
+      "-fno-omit-frame-pointer",
+      "-c",
+      "-o",
+      "build/main.o",
+      "src/main.c"
+    ],
+    "directory": "/home/janszo/personal/dev/os",
+    "output": "build/main.o"
+  },
+  {
+    "file": "src/x86.c",
+    "arguments": [
+      "gcc",
+      "-m32",
+      "-ggdb3",
+      "-ffreestanding",
+      "-Iinclude",
+      "-fno-stack-protector",
+      "-fno-pie",
+      "-fno-omit-frame-pointer",
+      "-c",
+      "-o",
+      "build/x86.o",
+      "src/x86.c"
+    ],
+    "directory": "/home/janszo/personal/dev/os",
+    "output": "build/x86.o"
+  }
+]
