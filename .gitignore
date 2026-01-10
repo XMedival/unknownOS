@@ -1,0 +1,5 @@
+build/
+iso/
+kernel.iso
+kernel.elf
+kernel.bin
