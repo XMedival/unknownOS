@@ -1,13 +1,10 @@
 #pragma once
 #include <types.h>
 
-#define ATTRIBUTE 7
-
-#define COLUMNS 80
-#define LINES 24
-#define FRAMEBUFFER_ADDR 0xB8000
-
-void cls();
-void itoa(char *buf, int base, int d);
-void putchar(int c);
-void printf(const char *format, ...);
+void* memset(void *dst, int c, uint n);
+int memcmp(const void *v1, const void *v2, uint n);
+void* memmove(void *dst, const void *src, uint n);
+void* memcpy(void *dst, const void *src, uint n);
+char* strncpy(char *s, const char *t, int n);
+char* safestrcpy(char *s, const char *t, int n);
+int strlen(const char *s);

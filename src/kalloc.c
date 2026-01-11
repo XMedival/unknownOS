@@ -1,7 +1,9 @@
 #include <kalloc.h>
 #include <types.h>
+#include <mmu.h>
 
-extern char end[];
+extern uint end;
+extern uint start;
 
 struct run {
     struct run *next;
@@ -15,7 +17,7 @@ struct {
 
 void kfree(char *v) {
 	struct run *r;
-	if((uint)v % PGSIZE || v < end) return;
+	if((uint)v % PGSIZE || (v < (char*)end && v > (char*)start)) return;
 
 	uint eflags;
 	asm volatile("pushfl; popl %0" : "=r"(eflags));

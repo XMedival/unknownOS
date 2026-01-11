@@ -1,9 +1,9 @@
 #include <multiboot2.h>
 #include <x86.h>
 #include <types.h>
-#include <string.h>
 #include <serial.h>
 #include <kalloc.h>
+#include <EGA.h>
 
 #define CHECK_FLAG(flags, bit)) ((flags) & (1 << (bit)))
 
@@ -82,12 +82,13 @@ void _start() {
 
         while (p < end) {
             struct multiboot_mmap_entry *e = (struct multiboot_mmap_entry *)p;
-            if (e->type == 1) 
+            if (e->type == 1) {
               freerange((void*)e->addr, (void*)(e->addr + e->len));
+              printf("Available Memory: %d KB\r", (freemem() * 4096) / 1024);
+            }
             p += mmap_tag->entry_size;
         }
-        ulong available_mem = freemem();
-        if (available_mem != 0) printf("Available Memory: %d KB\n", (available_mem * 4096) / 1024);
+        printf("\n");
       } else if (type == 21) {
         struct multiboot_tag_load_base_addr *load_addr = (struct multiboot_tag_load_base_addr*)&mbi->tags[i];
         start = load_addr->load_base_addr;

@@ -3,179 +3,126 @@
 #include <serial.h>
 #include <string.h>
 
-extern uint xpos;
-extern uint ypos;
-extern volatile uchar *video;
-
-void cls (void) {
-  int i;
-
-  video = (unsigned char *) FRAMEBUFFER_ADDR;
-  
-  for (i = 0; i < COLUMNS * LINES * 2; i++)
-    *(video + i) = 0;
-
-  xpos = 0;
-  ypos = 0;
+void*
+memset(void *dst, int c, uint n)
+{
+  if ((int)dst%4 == 0 && n%4 == 0){
+    c &= 0xFF;
+    stosl(dst, (c<<24)|(c<<16)|(c<<8)|c, n/4);
+  } else
+    stosb(dst, c, n);
+  return dst;
 }
 
-void itoa (char *buf, int base, int d) {
-  char *p = buf;
-  char *p1, *p2;
-  unsigned long ud = d;
-  int divisor = 10;
-  
-  /* If %d is specified and D is minus, put ‘-’ in the head. */
-  if (base == 'd' && d < 0)
-    {
-      *p++ = '-';
-      buf++;
-      ud = -d;
-    }
-  else if (base == 'x')
-    divisor = 16;
+int
+memcmp(const void *v1, const void *v2, uint n)
+{
+  const uchar *s1, *s2;
 
-  /* Divide UD by DIVISOR until UD == 0. */
-  do
-    {
-      int remainder = ud % divisor;
-      
-      *p++ = (remainder < 10) ? remainder + '0' : remainder + 'a' - 10;
-    }
-  while (ud /= divisor);
-
-  /* Terminate BUF. */
-  *p = 0;
-  
-  /* Reverse BUF. */
-  p1 = buf;
-  p2 = p - 1;
-  while (p1 < p2)
-    {
-      char tmp = *p1;
-      *p1 = *p2;
-      *p2 = tmp;
-      p1++;
-      p2--;
-    }
-}
-
-void putchar (int c) {
-  if (c == '\n')
-    {
-    newline:
-      serial_putc('\r');
-      serial_putc('\n');
-      xpos = 0;
-      ypos++;
-      if (ypos >= LINES)
-        ypos = 0;
-      return;
-    }
-  if (c == '\r')
-    {
-    carriage_ret:
-      serial_putc(c);
-      xpos = 0;
-      return;
-    }
-
-  *(video + (xpos + ypos * COLUMNS) * 2) = c & 0xFF;
-  *(video + (xpos + ypos * COLUMNS) * 2 + 1) = ATTRIBUTE;
-  serial_putc(c);
-
-  xpos++;
-  if (xpos >= COLUMNS)
-    goto newline;
-}
-
-static void ftoa(char *out, double x, int prec) {
-  if (x < 0) { *out++ = '-'; x = -x; }
-
-  int ip = (int)x;
-  double frac = x - (double)ip;
-
-  char tmp[20];
-  itoa(tmp, 'd', ip);
-
-  char *t = tmp;
-  while (*t) *out++ = *t++;
-
-  *out++ = '.';
-
-  for (int i = 0; i < prec; i++) {
-    frac *= 10.0;
-    int d = (int)frac;
-    *out++ = (char)('0' + d);
-    frac -= (double)d;
+  s1 = v1;
+  s2 = v2;
+  while(n-- > 0){
+    if(*s1 != *s2)
+      return *s1 - *s2;
+    s1++, s2++;
   }
 
-  *out = 0;
+  return 0;
 }
 
-void printf (const char *format, ...) {
-  char **arg = (char **) &format;
-  int c;
-  char buf[20];
+void*
+memmove(void *dst, const void *src, uint n)
+{
+  const char *s = src;
+  char *d = dst;
 
-  arg++;
-  
-  while ((c = *format++) != 0)
-    {
-      if (c != '%')
-        putchar (c);
-      else
-        {
-          char *p, *p2;
-          int pad0 = 0, pad = 0;
-          
-          c = *format++;
-          if (c == '0')
-            {
-              pad0 = 1;
-              c = *format++;
-            }
-
-          if (c >= '0' && c <= '9')
-            {
-              pad = c - '0';
-              c = *format++;
-            }
-
-          switch (c)
-            {
-            case 'd':
-            case 'u':
-            case 'x':
-              itoa (buf, c, *((int *) arg++));
-              p = buf;
-              goto string;
-              break;
-
-            case 'f':
-              ftoa(buf, *((double *)arg), 6);
-              arg += 2;
-              p = buf;
-              goto string;
-              break;
-
-            case 's':
-              p = *arg++;
-              if (! p)
-                p = "(null)";
-
-            string:
-              for (p2 = p; *p2; p2++);
-              for (; p2 < p + pad; p2++)
-                putchar (pad0 ? '0' : ' ');
-              while (*p)
-                putchar (*p++);
-              break;
-
-            default:
-              putchar (*((int *) arg++));
-              break;
-            }
-        }
+  if(s < d && s + n > d){
+    // Backward copy (overlapping, dst after src)
+    s += n;
+    d += n;
+    // Align to 4-byte boundary first (copy trailing bytes)
+    while(n > 0 && ((uint)d & 3)) {
+      *--d = *--s;
+      n--;
     }
+    // Copy dwords backward
+    while(n >= 4) {
+      d -= 4;
+      s -= 4;
+      *(uint*)d = *(const uint*)s;
+      n -= 4;
+    }
+    // Copy remaining bytes
+    while(n-- > 0)
+      *--d = *--s;
+  } else {
+    // Forward copy - use rep movsl when aligned
+    if(((uint)d & 3) == 0 && ((uint)s & 3) == 0 && n >= 4) {
+      uint dwords = n / 4;
+      asm volatile("rep movsl"
+        : "+D"(d), "+S"(s), "+c"(dwords)
+        :
+        : "memory");
+      n &= 3;  // remaining bytes
+    }
+    while(n-- > 0)
+      *d++ = *s++;
+  }
+
+  return dst;
+}
+
+// memcpy exists to placate GCC.  Use memmove.
+void*
+memcpy(void *dst, const void *src, uint n)
+{
+  return memmove(dst, src, n);
+}
+
+int
+strncmp(const char *p, const char *q, uint n)
+{
+  while(n > 0 && *p && *p == *q)
+    n--, p++, q++;
+  if(n == 0)
+    return 0;
+  return (uchar)*p - (uchar)*q;
+}
+
+char*
+strncpy(char *s, const char *t, int n)
+{
+  char *os;
+
+  os = s;
+  while(n-- > 0 && (*s++ = *t++) != 0)
+    ;
+  while(n-- > 0)
+    *s++ = 0;
+  return os;
+}
+
+// Like strncpy but guaranteed to NUL-terminate.
+char*
+safestrcpy(char *s, const char *t, int n)
+{
+  char *os;
+
+  os = s;
+  if(n <= 0)
+    return os;
+  while(--n > 0 && (*s++ = *t++) != 0)
+    ;
+  *s = 0;
+  return os;
+}
+
+int
+strlen(const char *s)
+{
+  int n;
+
+  for(n = 0; s[n]; n++)
+    ;
+  return n;
 }
