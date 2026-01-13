@@ -4,6 +4,9 @@
 #include <serial.h>
 #include <kalloc.h>
 #include <EGA.h>
+#include <idt.h>
+#include <log.h>
+#include <assert.h>
 
 #define CHECK_FLAG(flags, bit)) ((flags) & (1 << (bit)))
 
@@ -48,6 +51,9 @@ uint start;
 extern char end[];
 struct multiboot_info *mbi;
 
+static void init_memory(void);
+static const char *get_bootloader_name(void);
+
 // ------------------------------------------------------------
 
 void _start() {
@@ -55,46 +61,100 @@ void _start() {
     unsigned long addr;
     asm("mov %%eax,%0" : "=r"(magic));
     asm("mov %%ebx,%0" : "=r"(addr));
-    if (magic != MULTIBOOT2_BOOTLOADER_MAGIC) {
-        printf("Invalid magic number: 0x%x\n", (unsigned) magic);
-        hlt();
-    }
+
     mbi = (struct multiboot_info *) addr;
+    ASSERT(mbi);
+
+    // Early init (no logging yet)
     serial_init();
     cls();
-    printf("\nUnknownOS --- The OS nobody knows about\n");
-    printf("=======================================\n");
-    for (int i = 0;;) {
-      uint type = mbi->tags[i].type;
-      uint size = mbi->tags[i].size;
-      if (type == 0) {
-        break;
-      } else if (type == 1) {
-        struct multiboot_tag_string *cmdline = (struct multiboot_tag_string*)&mbi->tags[i];
-        if (!(*cmdline->string == 0)) printf("%s\n", cmdline->string);
-      } else if (type == 2) {
-        struct multiboot_tag_string *boot_name = (struct multiboot_tag_string*)&mbi->tags[i];
-        printf("Bootloader Name: %s\n", boot_name->string);
-      } else if (type == 6) {
-        struct multiboot_tag_mmap *mmap_tag = (struct multiboot_tag_mmap*)&mbi->tags[i];
-        uchar *p   = (uchar*)mmap_tag->entries;
-        uchar *end = (uchar*)mmap_tag + mmap_tag->size;
 
-        while (p < end) {
-            struct multiboot_mmap_entry *e = (struct multiboot_mmap_entry *)p;
-            if (e->type == 1) {
-              freerange((void*)e->addr, (void*)(e->addr + e->len));
-              printf("Available Memory: %d KB\r", (freemem() * 4096) / 1024);
-            }
-            p += mmap_tag->entry_size;
-        }
-        printf("\n");
-      } else if (type == 21) {
-        struct multiboot_tag_load_base_addr *load_addr = (struct multiboot_tag_load_base_addr*)&mbi->tags[i];
-        start = load_addr->load_base_addr;
-      }
-      i++;
-      i+=size/sizeof(struct multiboot_tag);
+    // Banner
+    printf("\n");
+    printf("  _   _       _                              ___  ____  \n");
+    printf(" | | | |_ __ | | ___ __   _____      ___ __ / _ \\/ ___| \n");
+    printf(" | | | | '_ \\| |/ / '_ \\ / _ \\ \\ /\\ / / '_  | | | \\___ \\ \n");
+    printf(" | |_| | | | |   <| | | | (_) \\ V  V /| | | | |_| |___) |\n");
+    printf("  \\___/|_| |_|_|\\_\\_| |_|\\___/ \\_/\\_/ |_| |_|\\___/|____/ \n");
+    printf("\n");
+
+    // Validate multiboot
+    if (magic != MULTIBOOT2_BOOTLOADER_MAGIC) {
+        LOG_FAIL("Invalid multiboot2 magic: 0x%x", (unsigned)magic);
+        hlt();
     }
+
+    // System initialization
+    printf("--- System Initialization ---\n\n");
+
+    LOG_OK("serial (COM1 @ 0x3F8)");
+
+    idt_init();
+    LOG_OK("idt (48 vectors + syscall)");
+
+    init_memory();
+
+    const char *bootloader = get_bootloader_name();
+    if (bootloader) {
+        LOG_INFO("booted via %s", bootloader);
+    }
+
+    printf("\n--- System Halted ---\n");
     hlt();
+}
+
+static void init_memory(void) {
+    for (int i = 0;;) {
+        uint type = mbi->tags[i].type;
+        uint size = mbi->tags[i].size;
+
+        if (type == 0) {
+            break;
+        } else if (type == 6) {
+            struct multiboot_tag_mmap *mmap_tag = (struct multiboot_tag_mmap*)&mbi->tags[i];
+            uchar *p   = (uchar*)mmap_tag->entries;
+            uchar *endp = (uchar*)mmap_tag + mmap_tag->size;
+
+            while (p < endp) {
+                struct multiboot_mmap_entry *e = (struct multiboot_mmap_entry *)p;
+                if (e->type == 1) {
+                    freerange((void*)(uint)e->addr, (void*)(uint)(e->addr + e->len));
+                }
+                p += mmap_tag->entry_size;
+            }
+        } else if (type == 21) {
+            struct multiboot_tag_load_base_addr *load_addr = (struct multiboot_tag_load_base_addr*)&mbi->tags[i];
+            start = load_addr->load_base_addr;
+        }
+
+        i++;
+        i += size / sizeof(struct multiboot_tag);
+    }
+
+    uint total_kb = (freemem() * 4096) / 1024;
+    uint total_mb = total_kb / 1024;
+
+    if (total_mb > 0) {
+        LOG_OK("memory (%d MB available)", total_mb);
+    } else {
+        LOG_OK("memory (%d KB available)", total_kb);
+    }
+}
+
+static const char *get_bootloader_name(void) {
+    for (int i = 0;;) {
+        uint type = mbi->tags[i].type;
+        uint size = mbi->tags[i].size;
+
+        if (type == 0) {
+            break;
+        } else if (type == 2) {
+            struct multiboot_tag_string *boot_name = (struct multiboot_tag_string*)&mbi->tags[i];
+            return boot_name->string;
+        }
+
+        i++;
+        i += size / sizeof(struct multiboot_tag);
+    }
+    return NULL;
 }

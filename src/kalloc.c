@@ -22,7 +22,8 @@ void kfree(char *v) {
 	uint eflags;
 	asm volatile("pushfl; popl %0" : "=r"(eflags));
 	asm volatile("cli");
-	r = kmem.freelist;
+	r = (struct run*)v;
+	r->next = kmem.freelist;
 	kmem.freelist = r;
 	kmem.nfree++;
 	if(eflags & 0x200)

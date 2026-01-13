@@ -3,3 +3,4 @@ iso/
 kernel.iso
 kernel.elf
 kernel.bin
+disk.img

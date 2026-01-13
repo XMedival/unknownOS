@@ -115,6 +115,38 @@ static inline void lcr3(uint val) {
   asm volatile("movl %0,%%cr3" : : "r" (val));
 }
 
+static inline uint rcr0(void) {
+  uint val;
+  asm volatile("movl %%cr0,%0" : "=r" (val));
+  return val;
+}
+
+static inline void lcr0(uint val) {
+  asm volatile("movl %0,%%cr0" : : "r" (val));
+}
+
+static inline uint rcr4(void) {
+  uint val;
+  asm volatile("movl %%cr4,%0" : "=r" (val));
+  return val;
+}
+
+static inline void lcr4(uint val) {
+  asm volatile("movl %0,%%cr4" : : "r" (val));
+}
+
+/* Initialize x87 FPU */
+static inline void fpu_init(void) {
+  uint cr0 = rcr0();
+  /* Clear EM (emulation), set MP (monitor coprocessor) */
+  cr0 &= ~(1 << 2);  /* Clear EM bit */
+  cr0 |= (1 << 1);   /* Set MP bit */
+  lcr0(cr0);
+
+  /* Initialize FPU */
+  asm volatile("fninit");
+}
+
 //PAGEBREAK: 36
 // Layout of the trap frame built on the stack by the
 // hardware and by trapasm.S, and passed to trap().

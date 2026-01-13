@@ -1,0 +1,26 @@
+# Bochs configuration for UnknownOS
+
+# Memory
+megs: 512
+
+# ROM images (adjust paths if needed)
+romimage: file=/usr/share/bochs/BIOS-bochs-latest
+vgaromimage: file=/usr/share/bochs/VGABIOS-lgpl-latest
+
+# Boot from CD
+boot: cdrom
+
+# CD-ROM with kernel ISO
+ata0-master: type=cdrom, path="kernel.iso", status=inserted
+
+# Display - use sdl or x
+display_library: sdl2
+
+# Enable magic breakpoint (xchg bx,bx)
+magic_break: enabled=1
+
+# Log
+log: bochsout.txt
+
+# Clock
+clock: sync=realtime, time0=local
