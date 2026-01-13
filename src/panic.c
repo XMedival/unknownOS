@@ -1,7 +1,6 @@
 #include <panic.h>
 #include <EGA.h>
 #include <serial.h>
-#include <stdio.h>
 #include <x86.h>
 
 __attribute__((noreturn))
