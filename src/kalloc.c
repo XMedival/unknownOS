@@ -1,9 +1,11 @@
 #include <kalloc.h>
+#include <stdio.h>
 #include <types.h>
 #include <mmu.h>
 
-extern uint end;
-extern uint start;
+extern char end[], start[];
+extern char *mbi;
+extern uint mbi_size;
 
 struct run {
     struct run *next;
@@ -14,10 +16,23 @@ struct {
 	int nfree;
 } kmem ;
 
+static inline int in_kernel(void* v) {
+  return (v >= (void*)start) && (v < (void*)end);
+}
+
+static inline int in_mbi(void* v) {
+  uint a = (uint)v;
+  uint m0 = (uint)mbi;
+  uint m1 = m0 + mbi_size;
+  return (a >= m0) && (a < m1);
+}
 
 void kfree(char *v) {
 	struct run *r;
-	if((uint)v % PGSIZE || (v < (char*)end && v > (char*)start)) return;
+
+	if((uint)v % PGSIZE != 0) return;
+  if(in_kernel(v)) return;
+  if(in_mbi(v)) return;
 
 	uint eflags;
 	asm volatile("pushfl; popl %0" : "=r"(eflags));
@@ -31,9 +46,10 @@ void kfree(char *v) {
 }
 
 void freerange(void *start, void *end) {
-     char *p;
+     char *p, *e;
 	 p = (char*)PGROUNDUP((uint)start);
-	 for(; p + PGSIZE <= (char*)end; p += PGSIZE)
+   e = (char*)PGROUNDDOWN((uint)end);
+	 for(; p + PGSIZE <= e; p += PGSIZE)
 		kfree(p);
 }
 

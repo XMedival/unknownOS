@@ -5,6 +5,8 @@
 #include <kalloc.h>
 #include <EGA.h>
 #include <idt.h>
+#include <gdt.h>
+#include <vm.h>
 #include <log.h>
 #include <assert.h>
 
@@ -47,9 +49,10 @@ const struct {
 uint xpos;
 uint ypos;
 volatile uchar *video;
-uint start;
+extern char start[];
 extern char end[];
 struct multiboot_info *mbi;
+uint mbi_size;
 
 static void init_memory(void);
 static const char *get_bootloader_name(void);
@@ -64,6 +67,7 @@ void _start() {
 
     mbi = (struct multiboot_info *) addr;
     ASSERT(mbi);
+    mbi_size = mbi->total_size;
 
     // Early init (no logging yet)
     serial_init();
@@ -81,7 +85,6 @@ void _start() {
     // Validate multiboot
     if (magic != MULTIBOOT2_BOOTLOADER_MAGIC) {
         LOG_FAIL("Invalid multiboot2 magic: 0x%x", (unsigned)magic);
-        hlt();
     }
 
     // System initialization
@@ -89,10 +92,16 @@ void _start() {
 
     LOG_OK("serial (COM1 @ 0x3F8)");
 
+    gdt_init();
+    LOG_OK("gdt set up");
+
     idt_init();
     LOG_OK("idt (48 vectors + syscall)");
 
     init_memory();
+
+    kvmalloc();
+    LOG_OK("paging (4MB pages, identity mapped)");
 
     const char *bootloader = get_bootloader_name();
     if (bootloader) {
@@ -117,14 +126,18 @@ static void init_memory(void) {
 
             while (p < endp) {
                 struct multiboot_mmap_entry *e = (struct multiboot_mmap_entry *)p;
-                if (e->type == 1) {
+                if (e->type == 1){
                     freerange((void*)(uint)e->addr, (void*)(uint)(e->addr + e->len));
                 }
                 p += mmap_tag->entry_size;
             }
         } else if (type == 21) {
             struct multiboot_tag_load_base_addr *load_addr = (struct multiboot_tag_load_base_addr*)&mbi->tags[i];
-            start = load_addr->load_base_addr;
+            if (start != (char*)load_addr->load_base_addr) {
+                LOG_WARN("Grub address not matching the linker start address");
+            } else {
+                LOG_INFO("Kernel Start label: 0x%x", start);
+            }
         }
 
         i++;

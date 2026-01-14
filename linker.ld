@@ -2,6 +2,7 @@ ENTRY(_start)
 
 SECTIONS {
     . = 1M;
+    PROVIDE(start = .);
 
     .multiboot2_header : ALIGN(8) {
         KEEP(*(.multiboot2_header))

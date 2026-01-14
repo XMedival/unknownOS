@@ -4,6 +4,13 @@
 // This file contains definitions for the
 // x86 memory management unit (MMU).
 
+// Virtual memory stuff
+#define KERNBASE 0xC0000000u
+
+#define P2V(p) ((void*)((uintptr_t)(p) + KERNBASE))
+#define V2P(v) ((uintptr_t)(v) - KERNBASE)
+
+
 // Eflags register
 #define FL_IF           0x00000200      // Interrupt Enable
 
@@ -42,6 +49,7 @@ struct segdesc {
   uint base_31_24 : 8; // High bits of segment base address
 };
 
+#define SEGNULL (struct segdesc){0,0,0,0,0,0,0,0,0,0,0,0,0}
 // Normal segment
 #define SEG(type, base, lim, dpl) (struct segdesc)    \
 { ((lim) >> 12) & 0xffff, (uint)(base) & 0xffff,      \
@@ -60,6 +68,7 @@ struct segdesc {
 
 #endif
 
+#define DPL_KERN    0x0     // Kernel DPL
 #define DPL_USER    0x3     // User DPL
 
 // Application segment type bits
@@ -166,6 +175,11 @@ struct gatedesc {
   uint p : 1;           // Present
   uint off_31_16 : 16;  // high bits of offset in segment
 };
+
+struct pseudodesc {
+  uint16 limit;
+  uint32 base;
+} __attribute__((packed));
 
 // Set up a normal interrupt/trap gate descriptor.
 // - istrap: 1 for a trap (= exception) gate, 0 for an interrupt gate.

@@ -1,6 +1,7 @@
 #pragma once
 #include <types.h>
 
-void kvmalloc();
-pde *setupkvm();
-void switchkvm();
+extern pde *kpgdir;
+
+void kvmalloc(void);
+void switchkvm(void);
