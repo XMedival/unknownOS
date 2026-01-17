@@ -9,6 +9,7 @@
 #include <vm.h>
 #include <log.h>
 #include <assert.h>
+#include <pci.h>
 
 #define CHECK_FLAG(flags, bit)) ((flags) & (1 << (bit)))
 
@@ -108,7 +109,15 @@ void _start() {
         LOG_INFO("booted via %s", bootloader);
     }
 
+    pci_init();
+
     printf("\n--- System Halted ---\n");
+    // NOTE:
+    // debug exit with the isa-debug-exit device os QEMU
+    // it is here so it closes if i run it in -nographic mode
+    // and this way i dont need to do <Ctrl-a>x to close it
+    // TODO: implement apci and dont use dumb trics like these
+    outb(0x501, 0x12); 
     hlt();
 }
 
