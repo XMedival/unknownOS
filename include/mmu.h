@@ -1,15 +1,13 @@
 #pragma once
 #include <types.h>
 
-// This file contains definitions for the
-// x86 memory management unit (MMU).
+// This file contains definitions for the x86-64 memory management unit (MMU).
 
-// Virtual memory stuff
-#define KERNBASE 0xC0000000u
+// In 64-bit mode with identity mapping, we don't use a high kernel base
+#define KERNBASE 0x0
 
-#define P2V(p) ((void*)((uintptr_t)(p) + KERNBASE))
-#define V2P(v) ((uintptr_t)(v) - KERNBASE)
-
+#define P2V(p) ((void*)(uintptr_t)(p))
+#define V2P(v) ((uintptr_t)(v))
 
 // Eflags register
 #define FL_IF           0x00000200      // Interrupt Enable
@@ -19,54 +17,90 @@
 #define CR0_WP          0x00010000      // Write Protect
 #define CR0_PG          0x80000000      // Paging
 
+#define CR4_PAE         0x00000020      // Physical Address Extension
 #define CR4_PSE         0x00000010      // Page size extension
 
-// various segment selectors.
-#define SEG_KCODE 1  // kernel code
-#define SEG_KDATA 2  // kernel data+stack
-#define SEG_UCODE 3  // user code
-#define SEG_UDATA 4  // user data+stack
-#define SEG_TSS   5  // this process's task state
+// MSR registers
+#define MSR_EFER        0xC0000080
+#define EFER_LME        0x100           // Long Mode Enable
+#define EFER_LMA        0x400           // Long Mode Active
+
+// Various segment selectors (indexes into GDT)
+#define SEG_NULL  0   // null
+#define SEG_KCODE 1   // kernel code
+#define SEG_KDATA 2   // kernel data+stack
+#define SEG_UCODE 3   // user code (32-bit compat, not used)
+#define SEG_UDATA 4   // user data+stack
+#define SEG_UCODE64 5 // user code 64-bit
+#define SEG_TSS   6   // TSS (takes 2 GDT slots in 64-bit mode)
 
 // cpu->gdt[NSEGS] holds the above segments.
-#define NSEGS     6
+// TSS takes 2 slots in 64-bit mode (16 bytes)
+#define NSEGS     8
 
 #ifndef __ASSEMBLER__
-// Segment Descriptor
+
+// 64-bit Segment Descriptor
+// In long mode, base and limit are ignored for code/data segments
 struct segdesc {
-  uint lim_15_0 : 16;  // Low bits of segment limit
-  uint base_15_0 : 16; // Low bits of segment base address
-  uint base_23_16 : 8; // Middle bits of segment base address
-  uint type : 4;       // Segment type (see STS_ constants)
-  uint s : 1;          // 0 = system, 1 = application
-  uint dpl : 2;        // Descriptor Privilege Level
-  uint p : 1;          // Present
-  uint lim_19_16 : 4;  // High bits of segment limit
-  uint avl : 1;        // Unused (available for software use)
-  uint rsv1 : 1;       // Reserved
-  uint db : 1;         // 0 = 16-bit segment, 1 = 32-bit segment
-  uint g : 1;          // Granularity: limit scaled by 4K when set
-  uint base_31_24 : 8; // High bits of segment base address
-};
+    uint16_t limit_low;
+    uint16_t base_low;
+    uint8_t  base_mid;
+    uint8_t  access;        // type, S, DPL, P
+    uint8_t  flags_limit;   // limit_high:4, flags:4 (AVL, L, D/B, G)
+    uint8_t  base_high;
+} __attribute__((packed));
 
-#define SEGNULL (struct segdesc){0,0,0,0,0,0,0,0,0,0,0,0,0}
-// Normal segment
-#define SEG(type, base, lim, dpl) (struct segdesc)    \
-{ ((lim) >> 12) & 0xffff, (uint)(base) & 0xffff,      \
-  ((uint)(base) >> 16) & 0xff, type, 1, dpl, 1,       \
-  (uint)(lim) >> 28, 0, 0, 1, 1, (uint)(base) >> 24 }
+// 64-bit TSS Descriptor (16 bytes, spans 2 GDT entries)
+struct tssdesc {
+    uint16_t limit_low;
+    uint16_t base_low;
+    uint8_t  base_mid;
+    uint8_t  access;
+    uint8_t  flags_limit;
+    uint8_t  base_mid2;
+    uint32_t base_high;
+    uint32_t reserved;
+} __attribute__((packed));
 
-#define SEG16(type, base, lim, dpl) (struct segdesc)  \
-{ (lim) & 0xffff, (uint)(base) & 0xffff,              \
-  ((uint)(base) >> 16) & 0xff, type, 1, dpl, 1,       \
-  (uint)(lim) >> 16, 0, 0, 1, 0, (uint)(base) >> 24 }
+// Null descriptor
+#define SEGNULL ((struct segdesc){0, 0, 0, 0, 0, 0})
 
-#define SEGTSS(type, base, lim, dpl) (struct segdesc)  \
-  { (lim) & 0xffff, (uint)(base) & 0xffff,              \
-    ((uint)(base) >> 16) & 0xff, type, 0, dpl, 1,       \
-    (uint)(lim) >> 16, 0, 0, 1, 0, (uint)(base) >> 24 }
+// 64-bit code segment (L=1, D=0)
+// access: P=1, DPL, S=1, type (0xA for code execute/read)
+// flags: G=1, L=1, D=0
+#define SEG64_CODE(dpl) ((struct segdesc){ \
+    .limit_low = 0xFFFF, \
+    .base_low = 0, \
+    .base_mid = 0, \
+    .access = 0x9A | ((dpl) << 5), /* P=1, S=1, type=0xA (exec/read) */ \
+    .flags_limit = 0xAF, /* G=1, L=1, D=0, limit_high=0xF */ \
+    .base_high = 0 \
+})
 
-#endif
+// 64-bit data segment (in long mode, most fields ignored)
+#define SEG64_DATA(dpl) ((struct segdesc){ \
+    .limit_low = 0xFFFF, \
+    .base_low = 0, \
+    .base_mid = 0, \
+    .access = 0x92 | ((dpl) << 5), /* P=1, S=1, type=0x2 (read/write) */ \
+    .flags_limit = 0xCF, /* G=1, D=1, limit_high=0xF */ \
+    .base_high = 0 \
+})
+
+// Build TSS descriptor (returns first 8 bytes, second 8 bytes set separately)
+static inline void set_tss_desc(struct tssdesc *desc, uint64_t base, uint32_t limit) {
+    desc->limit_low = limit & 0xFFFF;
+    desc->base_low = base & 0xFFFF;
+    desc->base_mid = (base >> 16) & 0xFF;
+    desc->access = 0x89;  // P=1, type=0x9 (64-bit TSS available)
+    desc->flags_limit = ((limit >> 16) & 0xF);  // G=0 for byte granularity
+    desc->base_mid2 = (base >> 24) & 0xFF;
+    desc->base_high = (base >> 32) & 0xFFFFFFFF;
+    desc->reserved = 0;
+}
+
+#endif // __ASSEMBLER__
 
 #define DPL_KERN    0x0     // Kernel DPL
 #define DPL_USER    0x3     // User DPL
@@ -76,130 +110,153 @@ struct segdesc {
 #define STA_W       0x2     // Writeable (non-executable segments)
 #define STA_R       0x2     // Readable (executable segments)
 
-// System segment type bits
+// System segment type bits (64-bit mode)
+#define STS_T64A    0x9     // Available 64-bit TSS
+#define STS_T64B    0xB     // Busy 64-bit TSS
+#define STS_IG64    0xE     // 64-bit Interrupt Gate
+#define STS_TG64    0xF     // 64-bit Trap Gate
+
+// Legacy 32-bit types (for reference)
 #define STS_T32A    0x9     // Available 32-bit TSS
 #define STS_IG32    0xE     // 32-bit Interrupt Gate
 #define STS_TG32    0xF     // 32-bit Trap Gate
 
-// A virtual address 'la' has a three-part structure as follows:
+// ============================================================================
+// 64-bit (4-level) Paging
+// ============================================================================
 //
-// +--------10------+-------10-------+---------12----------+
-// | Page Directory |   Page Table   | Offset within Page  |
-// |      Index     |      Index     |                     |
-// +----------------+----------------+---------------------+
-//  \--- PDX(va) --/ \--- PTX(va) --/
+// Virtual address structure (48-bit canonical):
+// +-------9------+-------9------+-------9------+-------9------+----12----+
+// |    PML4      |    PDPT      |     PD       |     PT       |  Offset  |
+// +-------9------+-------9------+-------9------+-------9------+----12----+
+//  bits 47:39     bits 38:30     bits 29:21     bits 20:12     bits 11:0
 
-// page directory index
-#define PDX(va)         (((uint)(va) >> PDXSHIFT) & 0x3FF)
+// Page table indices
+#define PML4X(va)       (((uint64_t)(va) >> 39) & 0x1FF)
+#define PDPTX(va)       (((uint64_t)(va) >> 30) & 0x1FF)
+#define PDX(va)         (((uint64_t)(va) >> 21) & 0x1FF)
+#define PTX(va)         (((uint64_t)(va) >> 12) & 0x1FF)
 
-// page table index
-#define PTX(va)         (((uint)(va) >> PTXSHIFT) & 0x3FF)
+// Page sizes
+#define PGSIZE          4096            // 4KB page
+#define PGSIZE_2MB      (2 * 1024 * 1024)  // 2MB huge page
+#define PGSIZE_1GB      (1024 * 1024 * 1024UL)  // 1GB huge page
 
-// construct virtual address from indexes and offset
-#define PGADDR(d, t, o) ((uint)((d) << PDXSHIFT | (t) << PTXSHIFT | (o)))
+// Number of entries per table
+#define NPTENTRIES      512
+#define NPDENTRIES      512
+#define NPDPTENTRIES    512
+#define NPML4ENTRIES    512
 
-// Page directory and page table constants.
-#define NPDENTRIES      1024    // # directory entries per page directory
-#define NPTENTRIES      1024    // # PTEs per page table
-#define PGSIZE          4096    // bytes mapped by a page
+// Shifts for page table levels
+#define PTXSHIFT        12
+#define PDXSHIFT        21
+#define PDPTXSHIFT      30
+#define PML4XSHIFT      39
 
-#define PTXSHIFT        12      // offset of PTX in a linear address
-#define PDXSHIFT        22      // offset of PDX in a linear address
+#define PGROUNDUP(sz)   (((sz) + PGSIZE - 1) & ~(PGSIZE - 1))
+#define PGROUNDDOWN(a)  ((a) & ~(PGSIZE - 1))
 
-#define PGROUNDUP(sz)  (((sz)+PGSIZE-1) & ~(PGSIZE-1))
-#define PGROUNDDOWN(a) (((a)) & ~(PGSIZE-1))
-
-// Page table/directory entry flags.
+// Page table/directory entry flags
 #define PTE_P           0x001   // Present
 #define PTE_W           0x002   // Writeable
-#define PTE_U           0x004   // User
-#define PTE_PS          0x080   // Page Size
+#define PTE_U           0x004   // User accessible
+#define PTE_PWT         0x008   // Write-through
+#define PTE_PCD         0x010   // Cache disable
+#define PTE_A           0x020   // Accessed
+#define PTE_D           0x040   // Dirty
+#define PTE_PS          0x080   // Page Size (2MB/1GB page)
+#define PTE_G           0x100   // Global
+#define PTE_NX          (1ULL << 63)  // No Execute (requires NX bit enabled)
 
-// Address in page table or page directory entry
-#define PTE_ADDR(pte)   ((uint)(pte) & ~0xFFF)
-#define PTE_FLAGS(pte)  ((uint)(pte) &  0xFFF)
+// Address extraction from PTE (mask off flags, get physical address)
+#define PTE_ADDR(pte)   ((uint64_t)(pte) & 0x000FFFFFFFFFF000ULL)
+#define PTE_FLAGS(pte)  ((uint64_t)(pte) & 0xFFF)
 
 #ifndef __ASSEMBLER__
-typedef uint pte_t;
 
-// Task state segment format
-struct taskstate {
-  uint link;         // Old ts selector
-  uint esp0;         // Stack pointers and segment selectors
-  ushort ss0;        //   after an increase in privilege level
-  ushort padding1;
-  uint *esp1;
-  ushort ss1;
-  ushort padding2;
-  uint *esp2;
-  ushort ss2;
-  ushort padding3;
-  void *cr3;         // Page directory base
-  uint *eip;         // Saved state from last task switch
-  uint eflags;
-  uint eax;          // More saved state (registers)
-  uint ecx;
-  uint edx;
-  uint ebx;
-  uint *esp;
-  uint *ebp;
-  uint esi;
-  uint edi;
-  ushort es;         // Even more saved state (segment selectors)
-  ushort padding4;
-  ushort cs;
-  ushort padding5;
-  ushort ss;
-  ushort padding6;
-  ushort ds;
-  ushort padding7;
-  ushort fs;
-  ushort padding8;
-  ushort gs;
-  ushort padding9;
-  ushort ldt;
-  ushort padding10;
-  ushort t;          // Trap on task switch
-  ushort iomb;       // I/O map base address
-};
-
-// Gate descriptors for interrupts and traps
-struct gatedesc {
-  uint off_15_0 : 16;   // low 16 bits of offset in segment
-  uint cs : 16;         // code segment selector
-  uint args : 5;        // # args, 0 for interrupt/trap gates
-  uint rsv1 : 3;        // reserved(should be zero I guess)
-  uint type : 4;        // type(STS_{IG32,TG32})
-  uint s : 1;           // must be 0 (system)
-  uint dpl : 2;         // descriptor(meaning new) privilege level
-  uint p : 1;           // Present
-  uint off_31_16 : 16;  // high bits of offset in segment
-};
-
-struct pseudodesc {
-  ushort limit;
-  uint base;
+// 64-bit Task State Segment
+// In long mode, TSS is simplified - no saved registers, just stack pointers
+struct taskstate64 {
+    uint32_t reserved0;
+    uint64_t rsp0;          // Stack pointer for ring 0
+    uint64_t rsp1;          // Stack pointer for ring 1
+    uint64_t rsp2;          // Stack pointer for ring 2
+    uint64_t reserved1;
+    uint64_t ist1;          // Interrupt Stack Table entries
+    uint64_t ist2;
+    uint64_t ist3;
+    uint64_t ist4;
+    uint64_t ist5;
+    uint64_t ist6;
+    uint64_t ist7;
+    uint64_t reserved2;
+    uint16_t reserved3;
+    uint16_t iomb;          // I/O map base address
 } __attribute__((packed));
 
-// Set up a normal interrupt/trap gate descriptor.
-// - istrap: 1 for a trap (= exception) gate, 0 for an interrupt gate.
-//   interrupt gate clears FL_IF, trap gate leaves FL_IF alone
-// - sel: Code segment selector for interrupt/trap handler
-// - off: Offset in code segment for interrupt/trap handler
-// - dpl: Descriptor Privilege Level -
-//        the privilege level required for software to invoke
-//        this interrupt/trap gate explicitly using an int instruction.
-#define SETGATE(gate, istrap, sel, off, d)                \
-{                                                         \
-  (gate).off_15_0 = (uint)(off) & 0xffff;                \
-  (gate).cs = (sel);                                      \
-  (gate).args = 0;                                        \
-  (gate).rsv1 = 0;                                        \
-  (gate).type = (istrap) ? STS_TG32 : STS_IG32;           \
-  (gate).s = 0;                                           \
-  (gate).dpl = (d);                                       \
-  (gate).p = 1;                                           \
-  (gate).off_31_16 = (uint)(off) >> 16;                  \
+// 64-bit Gate Descriptor (16 bytes for interrupt/trap gates)
+struct gatedesc64 {
+    uint16_t off_15_0;      // Low 16 bits of handler offset
+    uint16_t cs;            // Code segment selector
+    uint8_t  ist;           // IST index (bits 0-2), rest reserved
+    uint8_t  flags;         // Type (4 bits), 0, DPL (2 bits), P (1 bit)
+    uint16_t off_31_16;     // Bits 16-31 of handler offset
+    uint32_t off_63_32;     // Bits 32-63 of handler offset
+    uint32_t reserved;      // Reserved, must be 0
+} __attribute__((packed));
+
+// GDTR/IDTR structure for 64-bit mode
+struct pseudodesc64 {
+    uint16_t limit;
+    uint64_t base;
+} __attribute__((packed));
+
+// Set up a 64-bit interrupt/trap gate descriptor
+// istrap: 1 for trap gate (keeps interrupts enabled), 0 for interrupt gate
+// sel: code segment selector
+// off: 64-bit offset to handler
+// dpl: descriptor privilege level
+// ist: IST index (0 = don't use IST, 1-7 = use IST entry)
+static inline void setgate64(struct gatedesc64 *gate, int istrap, uint16_t sel,
+                             uint64_t off, uint8_t dpl, uint8_t ist) {
+    gate->off_15_0 = off & 0xFFFF;
+    gate->cs = sel;
+    gate->ist = ist & 0x7;
+    gate->flags = (istrap ? STS_TG64 : STS_IG64) | ((dpl & 0x3) << 5) | 0x80;
+    gate->off_31_16 = (off >> 16) & 0xFFFF;
+    gate->off_63_32 = (off >> 32) & 0xFFFFFFFF;
+    gate->reserved = 0;
 }
 
-#endif
+// Macro version for compatibility
+#define SETGATE64(gate, istrap, sel, off, d) \
+    setgate64(&(gate), (istrap), (sel), (uint64_t)(off), (d), 0)
+
+// Compatibility: keep old SETGATE working but redirect to 64-bit
+#define SETGATE(gate, istrap, sel, off, d) \
+    SETGATE64(gate, istrap, sel, off, d)
+
+// Legacy taskstate for compatibility (renamed)
+struct taskstate {
+    uint32_t reserved0;
+    uint64_t rsp0;
+    uint64_t rsp1;
+    uint64_t rsp2;
+    uint64_t reserved1;
+    uint64_t ist1;
+    uint64_t ist2;
+    uint64_t ist3;
+    uint64_t ist4;
+    uint64_t ist5;
+    uint64_t ist6;
+    uint64_t ist7;
+    uint64_t reserved2;
+    uint16_t reserved3;
+    uint16_t iomb;
+} __attribute__((packed));
+
+// Legacy gatedesc - actually use 64-bit version
+typedef struct gatedesc64 gatedesc;
+
+#endif // __ASSEMBLER__

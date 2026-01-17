@@ -3,6 +3,7 @@
 #include <EGA.h>
 #include <syscall.h>
 #include <proc.h>
+#include <kb.h>
 
 // Exception numbers
 #define T_DIVIDE     0      // Divide error
@@ -41,8 +42,8 @@
 #define PIC2_CMD    0xA0
 #define PIC2_DATA   0xA1
 
-// IDT with 256 entries
-struct gatedesc idt[256];
+// IDT with 256 entries (16 bytes each in 64-bit mode)
+struct gatedesc64 idt[256];
 
 // External vectors from trap.asm
 extern void vector0(void);
@@ -147,8 +148,8 @@ static void pic_remap(void) {
     outb(PIC2_DATA, 2);
     outb(PIC1_DATA, 1);
     outb(PIC2_DATA, 1);
-    outb(PIC1_DATA, 0xFF);  // Mask all IRQs
-    outb(PIC2_DATA, 0xFF);
+    outb(PIC1_DATA, 0xFD);  // 0xFD = 11111101 - IRQ1 (keyboard) unmasked
+    outb(PIC2_DATA, 0xFF);  // Mask all IRQs on PIC2
 }
 
 void idt_init(void) {
@@ -156,11 +157,11 @@ void idt_init(void) {
 
     // Set up exception and IRQ gates (vectors 0-47)
     for (int i = 0; i < 48; i++) {
-        SETGATE(idt[i], 0, KERN_CODE_SEL, vectors[i], 0);
+        setgate64(&idt[i], 0, KERN_CODE_SEL, (uint64_t)vectors[i], 0, 0);
     }
 
     // Set up syscall gate with DPL=3 so user code can invoke it
-    SETGATE(idt[T_SYSCALL], 1, KERN_CODE_SEL, vector64, DPL_USER);
+    setgate64(&idt[T_SYSCALL], 1, KERN_CODE_SEL, (uint64_t)vector64, DPL_USER, 0);
 
     // Load the IDT
     lidt(idt, sizeof(idt));
@@ -171,44 +172,49 @@ void trap(struct trapframe *tf) {
     switch (tf->trapno) {
     case T_PGFLT:
         printf("\n=== PAGE FAULT ===\n");
-        printf("Faulting address: 0x%x\n", rcr2());
-        printf("Error code: 0x%x\n", tf->err);
-        printf("EIP: 0x%x\n", tf->eip);
-        printf("CS: 0x%x\n", tf->cs);
+        printf("Faulting address: 0x%lx\n", rcr2());
+        printf("Error code: 0x%lx\n", tf->err);
+        printf("RIP: 0x%lx\n", tf->rip);
+        printf("CS: 0x%lx\n", tf->cs);
         break;
 
     case T_GPFLT:
         printf("\n=== GENERAL PROTECTION FAULT ===\n");
-        printf("Error code: 0x%x\n", tf->err);
-        printf("EIP: 0x%x\n", tf->eip);
-        printf("CS: 0x%x\n", tf->cs);
+        printf("Error code: 0x%lx\n", tf->err);
+        printf("RIP: 0x%lx\n", tf->rip);
+        printf("CS: 0x%lx\n", tf->cs);
         break;
 
     case T_DBLFLT:
         printf("\n=== DOUBLE FAULT ===\n");
-        printf("EIP: 0x%x\n", tf->eip);
+        printf("RIP: 0x%lx\n", tf->rip);
         break;
 
     case T_SYSCALL:
         syscall();
         return;
 
+    case 33:  // IRQ1 = keyboard (vector 32 + IRQ1)
+        kb_handler(tf);
+        outb(PIC1_CMD, 0x20);  // Send EOI
+        return;
+
     default:
         if (tf->trapno < 22) {
             printf("\n=== EXCEPTION: %s (#%d) ===\n",
-                   exception_names[tf->trapno], tf->trapno);
+                   exception_names[tf->trapno], (int)tf->trapno);
         } else if (tf->trapno >= IRQ0 && tf->trapno < IRQ0 + 16) {
-            printf("IRQ%d\n", tf->trapno - IRQ0);
+            printf("IRQ%d\n", (int)(tf->trapno - IRQ0));
             if (tf->trapno >= 40) {
                 outb(PIC2_CMD, 0x20);
             }
             outb(PIC1_CMD, 0x20);
             return;
         } else {
-            printf("\n=== UNKNOWN TRAP %d ===\n", tf->trapno);
+            printf("\n=== UNKNOWN TRAP %d ===\n", (int)tf->trapno);
         }
-        printf("EIP: 0x%x\n", tf->eip);
-        printf("Error: 0x%x\n", tf->err);
+        printf("RIP: 0x%lx\n", tf->rip);
+        printf("Error: 0x%lx\n", tf->err);
         break;
     }
 

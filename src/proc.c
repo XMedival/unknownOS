@@ -53,24 +53,24 @@ found:
     sp -= sizeof(struct context);
     p->context = (struct context*)sp;
     memset(p->context, 0, sizeof(struct context));
-    p->context->eip = (uint)forkret;
+    p->context->rip = (uint64_t)forkret;
 
     return p;
 }
 
-// Load an ELF binary and create a new process
+// Load an ELF64 binary and create a new process
 int exec(char *binary, uint size) {
     struct elfhdr *elf;
     struct proghdr *ph, *eph;
-    pde *pgdir = 0;
+    pte_t *pgdir = 0;
     struct proc *p;
-    uint sz = 0;
-    uint ustack;
+    uint64_t sz = 0;
+    uint64_t ustack;
 
     // Validate ELF header
     elf = (struct elfhdr*)binary;
     if (elf_check(elf) < 0) {
-        LOG_WARN("exec: invalid ELF");
+        LOG_WARN("exec: invalid ELF (not 64-bit or wrong format)");
         return -1;
     }
 
@@ -80,14 +80,14 @@ int exec(char *binary, uint size) {
         return -1;
     }
 
-    // Create page directory
+    // Create page directory (uses identity mapping for now)
     if ((pgdir = setupuvm()) == 0) {
         LOG_WARN("exec: setupuvm failed");
         goto bad;
     }
 
     // Load program segments
-    ph = (struct proghdr*)(binary + elf->phoff);
+    ph = (struct proghdr*)((char*)binary + elf->phoff);
     eph = ph + elf->phnum;
 
     for (; ph < eph; ph++) {
@@ -127,22 +127,16 @@ int exec(char *binary, uint size) {
         LOG_WARN("exec: stack allocuvm failed");
         goto bad;
     }
-    // Clear the guard page (make it inaccessible)
-    // For now, just use both pages as stack
 
     ustack = sz;  // Stack grows down from here
 
-    // Set up trapframe for return to user mode
+    // Set up trapframe for return to user mode (64-bit)
     memset(p->tf, 0, sizeof(*p->tf));
-    p->tf->cs = (SEG_UCODE << 3) | DPL_USER;
-    p->tf->ds = (SEG_UDATA << 3) | DPL_USER;
-    p->tf->es = p->tf->ds;
-    p->tf->fs = p->tf->ds;
-    p->tf->gs = p->tf->ds;
+    p->tf->cs = (SEG_UCODE64 << 3) | DPL_USER;  // 64-bit user code segment
     p->tf->ss = (SEG_UDATA << 3) | DPL_USER;
-    p->tf->eflags = FL_IF;  // Enable interrupts in user mode
-    p->tf->esp = ustack;
-    p->tf->eip = elf->entry;
+    p->tf->rflags = FL_IF;  // Enable interrupts in user mode
+    p->tf->rsp = ustack;
+    p->tf->rip = elf->entry;
 
     // Commit to the process
     p->pgdir = pgdir;
@@ -150,7 +144,8 @@ int exec(char *binary, uint size) {
     p->state = RUNNABLE;
     safestrcpy(p->name, "init", sizeof(p->name));
 
-    LOG_INFO("exec: loaded ELF, entry=0x%x, size=%d, pid=%d", elf->entry, sz, p->pid);
+    LOG_INFO("exec: loaded ELF64, entry=0x%lx, size=%ld, pid=%d",
+             elf->entry, sz, p->pid);
 
     return p->pid;
 
@@ -188,8 +183,6 @@ void exit(int status) {
 // Simple round-robin scheduler
 void scheduler(void) {
     struct proc *p;
-
-    // cpu.scheduler will be set by swtch when we context switch away
 
     LOG_INFO("Scheduler started");
 
@@ -230,4 +223,3 @@ void scheduler(void) {
         }
     }
 }
-

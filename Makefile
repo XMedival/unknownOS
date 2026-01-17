@@ -1,11 +1,18 @@
 CC := gcc
-CFLAGS := -m32 -ggdb3 -ffreestanding -Iinclude -nostdlib -fno-stack-protector -fno-pie -no-pie -fno-omit-frame-pointer
+
+# Display mode: 0=auto, 1=text, 2=framebuffer
+FB_MODE ?= 0
+
+# 64-bit kernel flags
+CFLAGS := -m64 -ggdb3 -ffreestanding -Iinclude -nostdlib -fno-stack-protector \
+          -fno-pie -no-pie -fno-omit-frame-pointer -mno-red-zone \
+          -mcmodel=kernel -DFB_FORCE_MODE=$(FB_MODE)
 
 AS := nasm
-ASFLAGS := -f elf32 -g
+ASFLAGS := -f elf64 -g
 
 LD := ld
-LDFLAGS := -melf_i386 -T linker.ld
+LDFLAGS := -melf_x86_64 -T linker.ld -z max-page-size=0x1000
 
 OUTDIR := build
 SRCDIR := src
@@ -38,12 +45,12 @@ $(OUTDIR)/libc/%.o: $(LIBCDIR)/%.asm | $(OUTDIR)/libc
 $(KERNEL): $(OBJS)
 	@$(LD) $(LDFLAGS) -o $@ $^
 
-# User program
+# User program (64-bit)
 $(OUTDIR)/user/%.o: $(USERDIR)/%.asm | $(OUTDIR)/user
 	@$(AS) $(ASFLAGS) -o $@ $<
 
 $(INIT): $(OUTDIR)/user/init.o
-	@$(LD) -melf_i386 -T $(USERDIR)/user.ld -o $@ $^
+	@$(LD) -melf_x86_64 -T $(USERDIR)/user.ld -o $@ $^
 
 $(OUTDIR)/user:
 	@mkdir -p $(OUTDIR)/user
@@ -59,7 +66,7 @@ $(DISK):
 	@qemu-img create $@ $(DISKSIZE)
 
 run: $(ISO) $(DISK)
-	@qemu-system-i386 -m 512 -cdrom $(ISO) -machine acpi=on -device e1000 -hda $(DISK) $(QEMUEXTRA)
+	@qemu-system-x86_64 -m 512 -cdrom $(ISO) -machine acpi=on -device e1000 -hda $(DISK) $(QEMUEXTRA)
 
 clean:
 	@rm -rf $(OUTDIR) $(ISO) $(KERNEL) $(INIT)

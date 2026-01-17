@@ -1,4 +1,4 @@
-[bits 32]
+[bits 64]
 [extern trap]
 
 ; Kernel data segment selector (SEG_KDATA << 3)
@@ -8,8 +8,8 @@
 %macro ISR_NOERRCODE 1
 global vector%1
 vector%1:
-    push dword 0        ; dummy error code
-    push dword %1       ; trap number
+    push qword 0        ; dummy error code
+    push qword %1       ; trap number
     jmp alltraps
 %endmacro
 
@@ -17,7 +17,7 @@ vector%1:
 %macro ISR_ERRCODE 1
 global vector%1
 vector%1:
-    push dword %1       ; trap number (error code already pushed by CPU)
+    push qword %1       ; trap number (error code already pushed by CPU)
     jmp alltraps
 %endmacro
 
@@ -78,30 +78,41 @@ ISR_NOERRCODE 47    ; IRQ15 - Secondary ATA
 ; Syscall vector (64)
 global vector64
 vector64:
-    push dword 0        ; dummy error code
-    push dword 64       ; syscall number
+    push qword 0        ; dummy error code
+    push qword 64       ; syscall number
     jmp alltraps
 
 ; Common trap handler
+; Stack layout on entry (after our pushes):
+;   SS, RSP, RFLAGS, CS, RIP (pushed by CPU)
+;   Error code (pushed by CPU or us)
+;   Trap number (pushed by us)
 alltraps:
-    ; Save segment registers (reverse order so ds is at lowest address)
-    push gs
-    push fs
-    push es
-    push ds
+    ; Save general purpose registers (build trapframe)
+    ; Order must match struct trapframe in x86.h
+    push rax
+    push rbx
+    push rcx
+    push rdx
+    push rsi
+    push rdi
+    push rbp
+    push r8
+    push r9
+    push r10
+    push r11
+    push r12
+    push r13
+    push r14
+    push r15
 
-    ; Save general purpose registers
-    pushad
-
-    ; Load kernel data segment
-    mov ax, SEG_KDATA_SEL
-    mov ds, ax
-    mov es, ax
+    ; In 64-bit mode, we don't need to load segment registers
+    ; The kernel uses a flat memory model
 
     ; Call C trap handler with trapframe pointer
-    push esp
+    ; First argument (rdi) = pointer to trapframe
+    mov rdi, rsp
     call trap
-    add esp, 4
 
     ; Fall through to trapret
 
@@ -109,22 +120,30 @@ alltraps:
 global trapret
 trapret:
     ; Restore general purpose registers
-    popad
-
-    ; Restore segment registers
-    pop ds
-    pop es
-    pop fs
-    pop gs
+    pop r15
+    pop r14
+    pop r13
+    pop r12
+    pop r11
+    pop r10
+    pop r9
+    pop r8
+    pop rbp
+    pop rdi
+    pop rsi
+    pop rdx
+    pop rcx
+    pop rbx
+    pop rax
 
     ; Remove trap number and error code from stack
-    add esp, 8
+    add rsp, 16
 
-    ; iret pops: EIP, CS, EFLAGS, and (if crossing rings) ESP, SS
-    iret
+    ; iretq pops: RIP, CS, RFLAGS, RSP, SS (always in 64-bit mode)
+    iretq
 
 ; Entry point for new processes after first context switch
-; The context->eip is set to forkret, which then falls through to trapret
+; The context->rip is set to forkret, which then falls through to trapret
 global forkret
 forkret:
     ; Stack pointer already points to trapframe

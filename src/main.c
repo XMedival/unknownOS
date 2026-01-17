@@ -13,6 +13,13 @@
 #include <pci.h>
 #include <acpi.h>
 #include <proc.h>
+#include <kb.h>
+#include <input.h>
+
+// Display mode (set via Makefile)
+#ifndef FB_FORCE_MODE
+#define FB_FORCE_MODE 0
+#endif
 
 #define CHECK_FLAG(flags, bit)) ((flags) & (1 << (bit)))
 
@@ -23,8 +30,6 @@ struct multiboot_info {
 }__attribute__((aligned(MULTIBOOT_INFO_ALIGN)));
 
 
-#define MULTIBOOT_HEADER_LENGTH (uint)sizeof(header)
-
 // Custom info request struct with actual requests
 struct inforeq_with_tags {
   multiboot_uint16_t type;
@@ -32,6 +37,10 @@ struct inforeq_with_tags {
   multiboot_uint32_t size;
   multiboot_uint32_t requests[7];  // Expanded for framebuffer
 } __attribute__((packed));
+
+// Calculate header size - this structure is 104 bytes
+// (16 + 16 + 24 + 40 + 8 bytes for each section with alignment)
+#define MB_HEADER_SIZE 104
 
 __attribute__((section(".multiboot2_header"), used,  aligned(MULTIBOOT_HEADER_ALIGN)))
 const struct {
@@ -44,15 +53,25 @@ const struct {
   .header = {
     .magic = MULTIBOOT2_HEADER_MAGIC,
     .architecture = MULTIBOOT_ARCHITECTURE_I386,
-    .header_length = MULTIBOOT_HEADER_LENGTH,
-    .checksum = 0 - (MULTIBOOT2_HEADER_MAGIC + MULTIBOOT_ARCHITECTURE_I386 + sizeof(header)),
+    .header_length = MB_HEADER_SIZE,
+    .checksum = (uint32_t)(-(int32_t)(MULTIBOOT2_HEADER_MAGIC + MULTIBOOT_ARCHITECTURE_I386 + MB_HEADER_SIZE)),
   },
   .cflags = {
     .type = MULTIBOOT_HEADER_TAG_CONSOLE_FLAGS,
     .flags = MULTIBOOT_HEADER_TAG_OPTIONAL,
     .size = sizeof(struct multiboot_header_tag_console_flags),
-    .console_flags = 0,
+    .console_flags = 3,
   },
+#if FB_FORCE_MODE == 1
+  // .fb_req = {
+    // .type = MULTIBOOT_HEADER_TAG_FRAMEBUFFER,
+    // .flags = MULTIBOOT_HEADER_TAG_OPTIONAL,  // Optional for fallback to text mode
+    // .size = sizeof(struct multiboot_header_tag_framebuffer),
+    // Request text mode (80x25)
+    // .width = 80,
+    // .height = 25,
+    // .depth = 0,      // depth=0 signals text mode preference
+#else
   .fb_req = {
     .type = MULTIBOOT_HEADER_TAG_FRAMEBUFFER,
     .flags = MULTIBOOT_HEADER_TAG_OPTIONAL,  // Optional for fallback to text mode
@@ -61,6 +80,7 @@ const struct {
     .height = 768,   // Preferred height
     .depth = 32,     // Preferred depth
   },
+#endif
   .infreq = {
       .type = MULTIBOOT_HEADER_TAG_INFORMATION_REQUEST,
       .flags = 0,
@@ -99,22 +119,43 @@ static const char *get_bootloader_name(void);
 
 // ------------------------------------------------------------
 
-void _start() {
-    unsigned long magic;
-    unsigned long addr;
-    asm("mov %%eax,%0" : "=r"(magic));
-    asm("mov %%ebx,%0" : "=r"(addr));
+// PC speaker beep as early debug signal
+void beep(void) {
+    // Set up PIT channel 2 for ~1000 Hz tone
+    outb(0x43, 0xB6);           // Channel 2, lobyte/hibyte, square wave
+    outb(0x42, 0x97);           // Divisor low byte (1193180 / 1000 ≈ 1193 = 0x04A9)
+    outb(0x42, 0x04);           // Divisor high byte
 
-    mbi = (struct multiboot_info *) addr;
+    // Enable speaker
+    uint8_t tmp = inb(0x61);
+    outb(0x61, tmp | 0x03);     // Enable speaker + PIT gate
+
+    // Delay (beep duration)
+    for (volatile int i = 0; i < 10000000; i++);
+
+    // Disable speaker
+    outb(0x61, tmp & 0xFC);
+}
+
+void _start(unsigned long magic, struct multiboot_info *info) {
+    mbi = info;
     ASSERT(mbi);
     mbi_size = mbi->total_size;
 
-    // Early init - GDT/IDT first so we can see exceptions
+    // Verify multiboot2 magic
+    if (magic != MULTIBOOT2_BOOTLOADER_MAGIC) {
+        // Can't use printf yet, just halt
+        for(;;) asm("hlt");
+    }
+
     serial_init();
     gdt_init();
     idt_init();
 
-    fb_init(mbi);  // Initialize framebuffer (or fall back to VGA text mode)
+    input_init();
+    kb_init();
+
+    fb_init(mbi);
 
     // Banner
     printf("\n");
@@ -136,6 +177,7 @@ void _start() {
     LOG_OK("serial (COM1 @ 0x3F8)");
     LOG_OK("gdt set up");
     LOG_OK("idt (48 vectors + syscall)");
+    LOG_OK("keyboard (PS/2, IRQ1)");
 
     parse_multiboot2_info();
 
@@ -168,7 +210,15 @@ void _start() {
     }
 
     printf("\n--- System Halted ---\n");
-    hlt();
+    printf("(Use PageUp/PageDown to scroll)\n");
+
+    // Enable interrupts so keyboard works even without a running process
+    sti();
+
+    // Halt loop - wakes on interrupt, handles it, then halts again
+    for (;;) {
+        hlt();
+    }
 }
 
 static void parse_multiboot2_info(void) {

@@ -15,6 +15,26 @@
 #define FB_COLOR_GRAY    0xAAAAAA
 #define FB_COLOR_GREEN   0x00AA00
 
+// Scroll buffer configuration
+#define SCROLL_LINES     500   // Number of lines to keep in history
+#define SCROLL_LINE_LEN  256   // Max characters per line
+
+// Scroll line entry
+struct scroll_line {
+    char text[SCROLL_LINE_LEN];
+    uint8_t len;
+    uint fg_color;                // Color at time of write (for graphics mode)
+    uint bg_color;
+};
+
+// Scroll buffer state
+struct scroll_buffer {
+    struct scroll_line lines[SCROLL_LINES];
+    uint write_idx;               // Circular write position (next line to write)
+    uint total_lines;             // Total lines written (max SCROLL_LINES)
+    int view_offset;              // 0 = live view, >0 = scrolled back N lines
+};
+
 // Framebuffer state
 struct fb_info {
     uint mode;                    // FB_MODE_TEXT or FB_MODE_RGB
@@ -63,3 +83,10 @@ void fb_set_colors(uint fg, uint bg);
 
 // Mode query
 int fb_is_graphics_mode(void);
+
+// Scroll buffer operations
+void fb_scroll_init(void);           // Initialize scroll buffer
+void fb_scroll_up(uint n);           // Scroll back n lines
+void fb_scroll_down(uint n);         // Scroll forward n lines
+void fb_scroll_to_bottom(void);      // Return to live output
+int fb_is_scrolled(void);            // Returns 1 if viewing history

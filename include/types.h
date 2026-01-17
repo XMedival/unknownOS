@@ -1,17 +1,19 @@
 #pragma once
 #include <stdint.h>
 #include <stdbool.h>
+#include <stddef.h>  // For size_t, ptrdiff_t, NULL
 
 typedef unsigned char uchar;
 typedef unsigned short ushort;
 typedef unsigned int uint;
-typedef unsigned long long ulong;
+typedef unsigned long ulong;
 
-typedef uint pde;
+// 64-bit page table entry types
+typedef uint64_t pte_t;
+typedef uint64_t pde_t;
 
-typedef unsigned int size_t;
-typedef int ssize_t;
-typedef int ptrdiff_t;
-typedef unsigned int uintptr_t;
-
-#define NULL ((void*)0)
+// Use stdint types - don't redefine size_t, ssize_t, etc.
+// They're provided by stddef.h/stdint.h
+typedef int64_t ssize_t;
+typedef uintptr_t vaddr_t;  // Virtual address
+typedef uintptr_t paddr_t;  // Physical address
