@@ -10,6 +10,7 @@
 #include <log.h>
 #include <assert.h>
 #include <pci.h>
+#include <acpi.h>
 
 #define CHECK_FLAG(flags, bit)) ((flags) & (1 << (bit)))
 
@@ -22,10 +23,19 @@ struct multiboot_info {
 
 #define MULTIBOOT_HEADER_LENGTH (uint)sizeof(header)
 
+// Custom info request struct with actual requests
+struct inforeq_with_tags {
+  multiboot_uint16_t type;
+  multiboot_uint16_t flags;
+  multiboot_uint32_t size;
+  multiboot_uint32_t requests[5];
+} __attribute__((packed));
+
 __attribute__((section(".multiboot2_header"), used,  aligned(MULTIBOOT_HEADER_ALIGN)))
 const struct {
   struct multiboot_header header;
   struct multiboot_header_tag_console_flags cflags __attribute__((aligned(MULTIBOOT_HEADER_ALIGN)));
+  struct inforeq_with_tags infreq __attribute__((aligned(MULTIBOOT_HEADER_ALIGN)));
   struct multiboot_header_tag end_tag __attribute__((aligned(MULTIBOOT_HEADER_ALIGN)));
 } header = {
   .header = {
@@ -39,6 +49,18 @@ const struct {
     .flags = 0,
     .size = sizeof(struct multiboot_header_tag_console_flags),
     .console_flags = 3,
+  },
+  .infreq = {
+      .type = MULTIBOOT_HEADER_TAG_INFORMATION_REQUEST,
+      .flags = 0,
+      .size = sizeof(struct inforeq_with_tags),
+      .requests = {
+          MULTIBOOT_TAG_TYPE_BOOT_LOADER_NAME,  // type 2
+          MULTIBOOT_TAG_TYPE_MMAP,              // type 6
+          MULTIBOOT_TAG_TYPE_LOAD_BASE_ADDR,    // type 21
+          MULTIBOOT_TAG_TYPE_ACPI_OLD,          // type 14
+          MULTIBOOT_TAG_TYPE_ACPI_NEW,          // type 15
+      },
   },
   .end_tag = {
     .type = MULTIBOOT_TAG_TYPE_END,
@@ -55,7 +77,7 @@ extern char end[];
 struct multiboot_info *mbi;
 uint mbi_size;
 
-static void init_memory(void);
+static void parse_multiboot2_info(void);
 static const char *get_bootloader_name(void);
 
 // ------------------------------------------------------------
@@ -99,7 +121,7 @@ void _start() {
     idt_init();
     LOG_OK("idt (48 vectors + syscall)");
 
-    init_memory();
+    parse_multiboot2_info();
 
     kvmalloc();
     LOG_OK("paging (4MB pages, identity mapped)");
@@ -111,24 +133,23 @@ void _start() {
 
     pci_init();
 
-    printf("\n--- System Halted ---\n");
-    // NOTE:
-    // debug exit with the isa-debug-exit device os QEMU
-    // it is here so it closes if i run it in -nographic mode
-    // and this way i dont need to do <Ctrl-a>x to close it
-    // TODO: implement apci and dont use dumb trics like these
-    outb(0x501, 0x12); 
+    acpi_init();
+
+    printf("\n--- System Shutdown ---\n");
+    acpi_shutdown();
+
+    // Fallback if ACPI shutdown fails
     hlt();
 }
 
-static void init_memory(void) {
+static void parse_multiboot2_info(void) {
     for (int i = 0;;) {
         uint type = mbi->tags[i].type;
         uint size = mbi->tags[i].size;
 
         if (type == 0) {
             break;
-        } else if (type == 6) {
+        } else if (type == MULTIBOOT_TAG_TYPE_MMAP) {
             struct multiboot_tag_mmap *mmap_tag = (struct multiboot_tag_mmap*)&mbi->tags[i];
             uchar *p   = (uchar*)mmap_tag->entries;
             uchar *endp = (uchar*)mmap_tag + mmap_tag->size;
@@ -140,7 +161,16 @@ static void init_memory(void) {
                 }
                 p += mmap_tag->entry_size;
             }
-        } else if (type == 21) {
+
+            uint total_kb = (freemem() * 4096) / 1024;
+            uint total_mb = total_kb / 1024;
+
+            if (total_mb > 0) {
+                LOG_OK("memory (%d MB available)", total_mb);
+            } else {
+                LOG_OK("memory (%d KB available)", total_kb);
+            }
+        } else if (type == MULTIBOOT_TAG_TYPE_LOAD_BASE_ADDR) {
             struct multiboot_tag_load_base_addr *load_addr = (struct multiboot_tag_load_base_addr*)&mbi->tags[i];
             if (start != (char*)load_addr->load_base_addr) {
                 LOG_WARN("Grub address not matching the linker start address");
@@ -151,15 +181,6 @@ static void init_memory(void) {
 
         i++;
         i += size / sizeof(struct multiboot_tag);
-    }
-
-    uint total_kb = (freemem() * 4096) / 1024;
-    uint total_mb = total_kb / 1024;
-
-    if (total_mb > 0) {
-        LOG_OK("memory (%d MB available)", total_mb);
-    } else {
-        LOG_OK("memory (%d KB available)", total_kb);
     }
 }
 

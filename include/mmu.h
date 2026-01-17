@@ -177,8 +177,8 @@ struct gatedesc {
 };
 
 struct pseudodesc {
-  uint16 limit;
-  uint32 base;
+  ushort limit;
+  uint base;
 } __attribute__((packed));
 
 // Set up a normal interrupt/trap gate descriptor.

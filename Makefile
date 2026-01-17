@@ -46,7 +46,7 @@ $(DISK):
 	@qemu-img create $@ $(DISKSIZE)
 
 run: $(ISO) $(DISK)
-	@qemu-system-i386 -m 512 -cdrom $(ISO) -hda $(DISK) $(QEMUEXTRA)
+	@qemu-system-i386 -m 512 -cdrom $(ISO) -machine acpi=on -device virtio-gpu -device e1000 -hda $(DISK) $(QEMUEXTRA)
 
 clean:
 	@rm -rf $(OUTDIR) $(ISO) $(KERNEL)
