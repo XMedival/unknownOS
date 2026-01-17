@@ -8,12 +8,6 @@ void abort(void)
     hlt();
 }
 
-void exit(int status)
-{
-  (void)status;
-  abort();
-}
-
 static int _errno = 0;
 int *__errno_location(void)
 {

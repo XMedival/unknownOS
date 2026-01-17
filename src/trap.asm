@@ -1,8 +1,8 @@
 [bits 32]
 [extern trap]
 
-; GRUB's data segment selector is 0x18 (not 0x10)
-%define SEG_KDATA_SEL 0x18
+; Kernel data segment selector (SEG_KDATA << 3)
+%define SEG_KDATA_SEL 0x10
 
 ; Macro for exceptions WITHOUT error code pushed by CPU
 %macro ISR_NOERRCODE 1
@@ -84,40 +84,30 @@ vector64:
 
 ; Common trap handler
 alltraps:
-    ; DEBUG: Write 'A' to VGA immediately to confirm we reached here
-    mov word [0xB8000], 0x4F41  ; 'A' in red on white
-
     ; Save segment registers (reverse order so ds is at lowest address)
     push gs
     push fs
     push es
     push ds
 
-    ; DEBUG: Write 'B' after segment pushes
-    mov word [0xB8002], 0x4F42  ; 'B'
-
     ; Save general purpose registers
     pushad
-
-    ; DEBUG: Write 'C' after pushad
-    mov word [0xB8004], 0x4F43  ; 'C'
 
     ; Load kernel data segment
     mov ax, SEG_KDATA_SEL
     mov ds, ax
     mov es, ax
 
-    ; DEBUG: Write 'D' after loading segments
-    mov word [0xB8006], 0x4F44  ; 'D'
-
     ; Call C trap handler with trapframe pointer
     push esp
     call trap
     add esp, 4
 
-    ; DEBUG: Write 'E' after trap() returns
-    mov word [0xB8008], 0x4F45  ; 'E'
+    ; Fall through to trapret
 
+; Return from trap - also used by forkret for new processes
+global trapret
+trapret:
     ; Restore general purpose registers
     popad
 
@@ -130,4 +120,13 @@ alltraps:
     ; Remove trap number and error code from stack
     add esp, 8
 
+    ; iret pops: EIP, CS, EFLAGS, and (if crossing rings) ESP, SS
     iret
+
+; Entry point for new processes after first context switch
+; The context->eip is set to forkret, which then falls through to trapret
+global forkret
+forkret:
+    ; Stack pointer already points to trapframe
+    ; Just jump to trapret to restore state and enter user mode
+    jmp trapret

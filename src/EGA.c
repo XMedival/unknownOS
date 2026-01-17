@@ -1,22 +1,16 @@
 #include <x86.h>
 #include <types.h>
 #include <EGA.h>
+#include <fb.h>
 #include <serial.h>
 
 extern uint xpos;
 extern uint ypos;
 extern volatile uchar *video;
 
+// cls now uses framebuffer driver
 void cls (void) {
-  int i;
-
-  video = (unsigned char *) FRAMEBUFFER_ADDR;
-  
-  for (i = 0; i < COLUMNS * LINES * 2; i++)
-    *(video + i) = 0;
-
-  xpos = 0;
-  ypos = 0;
+  fb_clear();
 }
 
 void itoa (char *buf, int base, int d) {
@@ -60,33 +54,9 @@ void itoa (char *buf, int base, int d) {
     }
 }
 
+// putchar now uses framebuffer driver (handles both graphics and text modes)
 void putchar (int c) {
-  if (c == '\n')
-    {
-    newline:
-      serial_putc('\r');
-      serial_putc('\n');
-      xpos = 0;
-      ypos++;
-      if (ypos >= LINES)
-        ypos = 0;
-      return;
-    }
-  if (c == '\r')
-    {
-    carriage_ret:
-      serial_putc(c);
-      xpos = 0;
-      return;
-    }
-
-  *(video + (xpos + ypos * COLUMNS) * 2) = c & 0xFF;
-  *(video + (xpos + ypos * COLUMNS) * 2 + 1) = ATTRIBUTE;
-  serial_putc(c);
-
-  xpos++;
-  if (xpos >= COLUMNS)
-    goto newline;
+  fb_putchar(c);
 }
 
 static void ftoa(char *out, double x, int prec) {

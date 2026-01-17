@@ -1,6 +1,8 @@
 #include <mmu.h>
 #include <x86.h>
 #include <EGA.h>
+#include <syscall.h>
+#include <proc.h>
 
 // Exception numbers
 #define T_DIVIDE     0      // Divide error
@@ -30,8 +32,8 @@
 
 #define IRQ0        32      // Hardware IRQs start here
 
-// GRUB's GDT: 0x10=code, 0x18=data
-#define GRUB_CODE_SEL 0x10
+// Kernel code selector (SEG_KCODE << 3)
+#define KERN_CODE_SEL (SEG_KCODE << 3)
 
 // PIC ports
 #define PIC1_CMD    0x20
@@ -154,11 +156,11 @@ void idt_init(void) {
 
     // Set up exception and IRQ gates (vectors 0-47)
     for (int i = 0; i < 48; i++) {
-        SETGATE(idt[i], 0, GRUB_CODE_SEL, vectors[i], 0);
+        SETGATE(idt[i], 0, KERN_CODE_SEL, vectors[i], 0);
     }
 
     // Set up syscall gate with DPL=3 so user code can invoke it
-    SETGATE(idt[T_SYSCALL], 1, GRUB_CODE_SEL, vector64, DPL_USER);
+    SETGATE(idt[T_SYSCALL], 1, KERN_CODE_SEL, vector64, DPL_USER);
 
     // Load the IDT
     lidt(idt, sizeof(idt));
@@ -188,8 +190,7 @@ void trap(struct trapframe *tf) {
         break;
 
     case T_SYSCALL:
-        printf("Syscall: eax=%d\n", tf->eax);
-        // TODO: implement syscall dispatch
+        syscall();
         return;
 
     default:

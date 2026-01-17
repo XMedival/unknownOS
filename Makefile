@@ -10,9 +10,11 @@ LDFLAGS := -melf_i386 -T linker.ld
 OUTDIR := build
 SRCDIR := src
 LIBCDIR := src/libc
+USERDIR := user
 
 ISO := kernel.iso
 KERNEL := kernel.elf
+INIT := init.elf
 DISK := disk.img
 DISKSIZE := 2G
 
@@ -36,20 +38,31 @@ $(OUTDIR)/libc/%.o: $(LIBCDIR)/%.asm | $(OUTDIR)/libc
 $(KERNEL): $(OBJS)
 	@$(LD) $(LDFLAGS) -o $@ $^
 
-$(ISO): $(KERNEL) grub.cfg
+# User program
+$(OUTDIR)/user/%.o: $(USERDIR)/%.asm | $(OUTDIR)/user
+	@$(AS) $(ASFLAGS) -o $@ $<
+
+$(INIT): $(OUTDIR)/user/init.o
+	@$(LD) -melf_i386 -T $(USERDIR)/user.ld -o $@ $^
+
+$(OUTDIR)/user:
+	@mkdir -p $(OUTDIR)/user
+
+$(ISO): $(KERNEL) $(INIT) grub.cfg
 	@mkdir -p iso/boot/grub/
 	@cp grub.cfg iso/boot/grub/
 	@cp $(KERNEL) iso/boot/
+	@cp $(INIT) iso/boot/
 	@grub-mkrescue iso -o $@
 
 $(DISK):
 	@qemu-img create $@ $(DISKSIZE)
 
 run: $(ISO) $(DISK)
-	@qemu-system-i386 -m 512 -cdrom $(ISO) -machine acpi=on -device virtio-gpu -device e1000 -hda $(DISK) $(QEMUEXTRA)
+	@qemu-system-i386 -m 512 -cdrom $(ISO) -machine acpi=on -device e1000 -hda $(DISK) $(QEMUEXTRA)
 
 clean:
-	@rm -rf $(OUTDIR) $(ISO) $(KERNEL)
+	@rm -rf $(OUTDIR) $(ISO) $(KERNEL) $(INIT)
 
 $(OUTDIR):
 	@mkdir -p $(OUTDIR)

@@ -40,3 +40,9 @@ struct proc {
   char name[16];
   int vt;                 // Which VT this process is attached to
 };
+
+// Process management functions
+struct proc* allocproc(void);
+int exec(char *binary, uint size);
+void exit(int status);
+void scheduler(void);
