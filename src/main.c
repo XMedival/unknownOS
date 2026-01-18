@@ -150,6 +150,21 @@ void _start(unsigned long magic, struct multiboot_info *info) {
 
     acpi_init();
 
+    printf("\n");
+    printf("  _   _       _                              ___  ____  \n");
+    printf(" | | | |_ __ | | ___ __   _____      ___ __ / _ \\/ ___| \n");
+    printf(" | | | | '_ \\| |/ / '_ \\ / _ \\ \\ /\\ / / '_  | | | \\___ \\ \n");
+    printf(" | |_| | | | |   <| | | | (_) \\ V  V /| | | | |_| |___) |\n");
+    printf("  \\___/|_| |_|_|\\_\\_| |_|\\___/ \\_/\\_/ |_| |_|\\___/|____/ \n");
+    printf("\n");
+    printf("\n");
+    printf("  _   _       _                              ___  ____  \n");
+    printf(" | | | |_ __ | | ___ __   _____      ___ __ / _ \\/ ___| \n");
+    printf(" | | | | '_ \\| |/ / '_ \\ / _ \\ \\ /\\ / / '_  | | | \\___ \\ \n");
+    printf(" | |_| | | | |   <| | | | (_) \\ V  V /| | | | |_| |___) |\n");
+    printf("  \\___/|_| |_|_|\\_\\_| |_|\\___/ \\_/\\_/ |_| |_|\\___/|____/ \n");
+    printf("\n");
+
     printf("\n--- Running User Process ---\n");
 
     // Try to load init from multiboot module

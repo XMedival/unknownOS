@@ -34,6 +34,7 @@ static uint fb_color_to_pixel(uint rgb24);
 static void fb_scroll_add_line(const char *text, uint len);
 static void fb_redraw_from_buffer(void);
 static void scroll_input_handler(struct key_event *ev, void *ctx);
+static void fb_draw_scroll_line_at_row(int line_idx, uint row);
 
 // External multiboot info structure
 struct multiboot_info {
@@ -247,38 +248,11 @@ static void fb_draw_char(uint col, uint row, uchar c, uint fg, uint bg) {
     }
 }
 
-// Scroll screen up by one line
+// Scroll screen up by one line - redraw from scroll buffer (no slow FB reads)
 static void fb_scroll(void) {
-    if (fb.mode == FB_MODE_TEXT) {
-        // VGA text mode - copy memory
-        uint line_bytes = fb.text_cols * 2;
-        for (uint i = 0; i < fb.text_rows - 1; i++) {
-            for (uint j = 0; j < line_bytes; j++) {
-                fb.addr[i * line_bytes + j] = fb.addr[(i + 1) * line_bytes + j];
-            }
-        }
-        // Clear last line
-        for (uint j = 0; j < line_bytes; j += 2) {
-            fb.addr[(fb.text_rows - 1) * line_bytes + j] = ' ';
-            fb.addr[(fb.text_rows - 1) * line_bytes + j + 1] = 0x07;
-        }
-        return;
-    }
-
-    // Graphics mode - copy scanlines
-    uint bytes_per_text_line = FONT_HEIGHT * fb.pitch;
-    uint total_lines = (fb.text_rows - 1) * FONT_HEIGHT;
-
-    // Copy lines up
-    for (uint y = 0; y < total_lines; y++) {
-        for (uint x = 0; x < fb.pitch; x++) {
-            fb.addr[y * fb.pitch + x] = fb.addr[(y + FONT_HEIGHT) * fb.pitch + x];
-        }
-    }
-
-    // Clear last text line
-    fb_fill_rect(0, (fb.text_rows - 1) * FONT_HEIGHT,
-                 fb.text_cols * FONT_WIDTH, FONT_HEIGHT, fb.bg_color);
+    // Just redraw everything from the scroll buffer
+    // This is faster than copying pixels because it only writes to FB, never reads
+    fb_redraw_from_buffer();
 }
 
 void fb_putchar(int c) {
@@ -448,89 +422,133 @@ static struct scroll_line *fb_scroll_get_line(uint idx) {
     return &scroll_buf.lines[actual_idx];
 }
 
-// Redraw screen from scroll buffer
-static void fb_redraw_from_buffer(void) {
-    // Clear screen first
-    if (fb.mode == FB_MODE_TEXT) {
-        for (uint i = 0; i < fb.text_cols * fb.text_rows * 2; i += 2) {
-            fb.addr[i] = ' ';
-            fb.addr[i + 1] = 0x07;
+// Draw a specific line from scroll buffer at a specific screen row
+static void fb_draw_scroll_line_at_row(int line_idx, uint row) {
+    if (line_idx < 0 || (uint)line_idx >= scroll_buf.total_lines) {
+        // Clear the row if no line
+        if (fb.mode == FB_MODE_TEXT) {
+            uint line_bytes = fb.text_cols * 2;
+            for (uint j = 0; j < line_bytes; j += 2) {
+                fb.addr[row * line_bytes + j] = ' ';
+                fb.addr[row * line_bytes + j + 1] = 0x07;
+            }
+        } else {
+            fb_fill_rect(0, row * FONT_HEIGHT, fb.text_cols * FONT_WIDTH, FONT_HEIGHT, fb.bg_color);
         }
-    } else {
-        fb_fill_rect(0, 0, fb.text_cols * FONT_WIDTH,
-                     fb.text_rows * FONT_HEIGHT, fb.bg_color);
+        return;
     }
 
-    // Calculate which lines to display
-    // view_offset = 0 means show newest lines
-    // view_offset > 0 means show lines that many positions back
+    struct scroll_line *line = fb_scroll_get_line(line_idx);
+    if (!line) return;
 
+    // Clear the row first
+    if (fb.mode == FB_MODE_TEXT) {
+        uint line_bytes = fb.text_cols * 2;
+        for (uint j = 0; j < line_bytes; j += 2) {
+            fb.addr[row * line_bytes + j] = ' ';
+            fb.addr[row * line_bytes + j + 1] = 0x07;
+        }
+    } else {
+        fb_fill_rect(0, row * FONT_HEIGHT, fb.text_cols * FONT_WIDTH, FONT_HEIGHT, fb.bg_color);
+    }
+
+    // Draw characters
+    for (uint col = 0; col < line->len && col < fb.text_cols; col++) {
+        fb_draw_char(col, row, line->text[col], line->fg_color, line->bg_color);
+    }
+}
+
+// Redraw screen from scroll buffer (no clear - each line handles its own row)
+static void fb_redraw_from_buffer(void) {
     uint display_rows = fb.text_rows;
     int start_line;
 
     if (scroll_buf.view_offset == 0) {
-        // Live view - show the last display_rows lines
         start_line = (int)scroll_buf.total_lines - (int)display_rows;
         if (start_line < 0) start_line = 0;
     } else {
-        // Scrolled view
         start_line = (int)scroll_buf.total_lines - (int)display_rows - scroll_buf.view_offset;
         if (start_line < 0) start_line = 0;
     }
 
-    // Draw lines
+    // Draw all lines (each line clears its own row)
     for (uint row = 0; row < display_rows; row++) {
-        int line_idx = start_line + row;
-        if (line_idx < 0 || (uint)line_idx >= scroll_buf.total_lines) {
-            continue;
-        }
-
-        struct scroll_line *line = fb_scroll_get_line(line_idx);
-        if (!line) continue;
-
-        for (uint col = 0; col < line->len && col < fb.text_cols; col++) {
-            fb_draw_char(col, row, line->text[col], line->fg_color, line->bg_color);
-        }
+        fb_draw_scroll_line_at_row(start_line + row, row);
     }
 
     // If in live view, also show the current incomplete line
     if (scroll_buf.view_offset == 0 && line_pos > 0) {
-        uint row = scroll_buf.total_lines < display_rows ?
-                   scroll_buf.total_lines : display_rows - 1;
-
-        // If we just filled a screen, the current line is at cursor_y
-        row = fb.cursor_y;
-        for (uint col = 0; col < line_pos && col < fb.text_cols; col++) {
-            fb_draw_char(col, row, line_buf[col], fb.fg_color, fb.bg_color);
+        uint row = fb.cursor_y;
+        // Clear rest of current line and draw partial content
+        if (fb.mode == FB_MODE_TEXT) {
+            uint line_bytes = fb.text_cols * 2;
+            uint base = row * line_bytes;
+            for (uint col = 0; col < fb.text_cols; col++) {
+                if (col < line_pos) {
+                    fb.addr[base + col * 2] = line_buf[col];
+                    fb.addr[base + col * 2 + 1] = 0x07;
+                } else {
+                    fb.addr[base + col * 2] = ' ';
+                    fb.addr[base + col * 2 + 1] = 0x07;
+                }
+            }
+        } else {
+            for (uint col = 0; col < fb.text_cols; col++) {
+                if (col < line_pos) {
+                    fb_draw_char(col, row, line_buf[col], fb.fg_color, fb.bg_color);
+                } else {
+                    fb_draw_char(col, row, ' ', fb.fg_color, fb.bg_color);
+                }
+            }
         }
     }
 }
 
-void fb_scroll_up(uint n) {
-    if (scroll_buf.total_lines == 0) return;
+// Prevent re-entrant scroll during redraw
+static volatile int scroll_busy = 0;
 
-    // Calculate maximum scroll offset
+void fb_scroll_up(uint n) {
+    if (scroll_busy) return;
+    if (scroll_buf.total_lines == 0) return;
+    if (n == 0) return;
+
+    scroll_busy = 1;
+
     int max_offset = (int)scroll_buf.total_lines - (int)fb.text_rows;
     if (max_offset < 0) max_offset = 0;
 
+    uint old_offset = scroll_buf.view_offset;
     scroll_buf.view_offset += n;
     if (scroll_buf.view_offset > (uint)max_offset) {
         scroll_buf.view_offset = max_offset;
     }
 
-    fb_redraw_from_buffer();
+    if (scroll_buf.view_offset != old_offset) {
+        fb_redraw_from_buffer();
+    }
+
+    scroll_busy = 0;
 }
 
 void fb_scroll_down(uint n) {
+    if (scroll_busy) return;
     if (scroll_buf.view_offset == 0) return;
+    if (n == 0) return;
 
-    if (n >= (uint)scroll_buf.view_offset) {
+    scroll_busy = 1;
+
+    uint old_offset = scroll_buf.view_offset;
+    if (n >= scroll_buf.view_offset) {
         scroll_buf.view_offset = 0;
     } else {
         scroll_buf.view_offset -= n;
     }
 
-    fb_redraw_from_buffer();
+    if (scroll_buf.view_offset != old_offset) {
+        fb_redraw_from_buffer();
+    }
+
+    scroll_busy = 0;
 }
 
 void fb_scroll_to_bottom(void) {
