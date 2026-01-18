@@ -128,7 +128,7 @@ static void fb_init_text_mode(void) {
 
 static void fb_init_rgb_mode(struct multiboot_tag_framebuffer *tag) {
     fb.mode = FB_MODE_RGB;
-    fb.addr = (volatile uchar *)(uint)tag->common.framebuffer_addr;
+    fb.addr = (volatile uchar *)(uintptr_t)tag->common.framebuffer_addr;
     fb.pitch = tag->common.framebuffer_pitch;
     fb.width = tag->common.framebuffer_width;
     fb.height = tag->common.framebuffer_height;

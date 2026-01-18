@@ -7,8 +7,8 @@
 extern char end[], start[];
 extern char *mbi;
 extern uint mbi_size;
-extern uint init_module_start;
-extern uint init_module_end;
+extern uintptr_t init_module_start;
+extern uintptr_t init_module_end;
 
 struct run {
     struct run *next;

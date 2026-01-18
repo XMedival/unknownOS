@@ -49,9 +49,9 @@ const struct {
       .type = MULTIBOOT_HEADER_TAG_FRAMEBUFFER,
       .flags = 0,
       .size = sizeof(struct multiboot_header_tag_framebuffer),
-      .width = 1366,
-      .height = 768,
-      .depth = 32,
+      .width = 0,
+      .height = 0,
+      .depth = 0,
   },
   .end_tag = {
     .type = MULTIBOOT_TAG_TYPE_END,
@@ -69,8 +69,8 @@ struct multiboot_info *mbi;
 uint mbi_size;
 
 // Module info (for init binary) - exported for kalloc to protect
-uint init_module_start = 0;
-uint init_module_end = 0;
+uintptr_t init_module_start = 0;
+uintptr_t init_module_end = 0;
 
 static void parse_multiboot2_info(void);
 static const char *get_bootloader_name(void);
@@ -179,22 +179,20 @@ void _start(unsigned long magic, struct multiboot_info *info) {
 }
 
 static void parse_multiboot2_info(void) {
-    // First pass: find modules (so we can protect their memory during freerange)
-    for (int i = 0;;) {
-        uint type = mbi->tags[i].type;
-        uint size = mbi->tags[i].size;
+    struct multiboot_tag *tag;
 
-        if (type == 0) {
-            break;
-        } else if (type == MULTIBOOT_TAG_TYPE_LOAD_BASE_ADDR) {
-            struct multiboot_tag_load_base_addr *load_addr = (struct multiboot_tag_load_base_addr*)&mbi->tags[i];
-            if (start != (char*)load_addr->load_base_addr) {
-                LOG_WARN("Grub address not matching the linker start address");
+    // First pass: find modules (so we can protect their memory during freerange)
+    tag = (struct multiboot_tag *)((uchar *)mbi + 8);
+    while (tag->type != 0) {
+        if (tag->type == MULTIBOOT_TAG_TYPE_LOAD_BASE_ADDR) {
+            struct multiboot_tag_load_base_addr *load_addr = (struct multiboot_tag_load_base_addr*)tag;
+            if (start != (char*)(uintptr_t)load_addr->load_base_addr) {
+                LOG_WARN("Bootloader address not matching the linker start address");
             } else {
                 LOG_INFO("Kernel Start label: 0x%x", start);
             }
-        } else if (type == MULTIBOOT_TAG_TYPE_MODULE) {
-            struct multiboot_tag_module *mod = (struct multiboot_tag_module*)&mbi->tags[i];
+        } else if (tag->type == MULTIBOOT_TAG_TYPE_MODULE) {
+            struct multiboot_tag_module *mod = (struct multiboot_tag_module*)tag;
             LOG_INFO("Module: %s (0x%x - 0x%x)", mod->cmdline, mod->mod_start, mod->mod_end);
             // Store first module as init
             if (init_module_start == 0) {
@@ -202,27 +200,22 @@ static void parse_multiboot2_info(void) {
                 init_module_end = mod->mod_end;
             }
         }
-
-        i++;
-        i += size / sizeof(struct multiboot_tag);
+        // Move to next tag (8-byte aligned)
+        tag = (struct multiboot_tag *)((uchar *)tag + ((tag->size + 7) & ~7));
     }
 
     // Second pass: process memory map (now that modules are registered for protection)
-    for (int i = 0;;) {
-        uint type = mbi->tags[i].type;
-        uint size = mbi->tags[i].size;
-
-        if (type == 0) {
-            break;
-        } else if (type == MULTIBOOT_TAG_TYPE_MMAP) {
-            struct multiboot_tag_mmap *mmap_tag = (struct multiboot_tag_mmap*)&mbi->tags[i];
+    tag = (struct multiboot_tag *)((uchar *)mbi + 8);
+    while (tag->type != 0) {
+        if (tag->type == MULTIBOOT_TAG_TYPE_MMAP) {
+            struct multiboot_tag_mmap *mmap_tag = (struct multiboot_tag_mmap*)tag;
             uchar *p   = (uchar*)mmap_tag->entries;
             uchar *endp = (uchar*)mmap_tag + mmap_tag->size;
 
             while (p < endp) {
                 struct multiboot_mmap_entry *e = (struct multiboot_mmap_entry *)p;
                 if (e->type == 1){
-                    freerange((void*)(uint)e->addr, (void*)(uint)(e->addr + e->len));
+                    freerange((void*)(uintptr_t)e->addr, (void*)(uintptr_t)(e->addr + e->len));
                 }
                 p += mmap_tag->entry_size;
             }
@@ -236,26 +229,19 @@ static void parse_multiboot2_info(void) {
                 LOG_OK("memory (%d KB available)", total_kb);
             }
         }
-
-        i++;
-        i += size / sizeof(struct multiboot_tag);
+        // Move to next tag (8-byte aligned)
+        tag = (struct multiboot_tag *)((uchar *)tag + ((tag->size + 7) & ~7));
     }
 }
 
 static const char *get_bootloader_name(void) {
-    for (int i = 0;;) {
-        uint type = mbi->tags[i].type;
-        uint size = mbi->tags[i].size;
-
-        if (type == 0) {
-            break;
-        } else if (type == 2) {
-            struct multiboot_tag_string *boot_name = (struct multiboot_tag_string*)&mbi->tags[i];
+    struct multiboot_tag *tag = (struct multiboot_tag *)((uchar *)mbi + 8);
+    while (tag->type != 0) {
+        if (tag->type == MULTIBOOT_TAG_TYPE_BOOT_LOADER_NAME) {
+            struct multiboot_tag_string *boot_name = (struct multiboot_tag_string*)tag;
             return boot_name->string;
         }
-
-        i++;
-        i += size / sizeof(struct multiboot_tag);
+        tag = (struct multiboot_tag *)((uchar *)tag + ((tag->size + 7) & ~7));
     }
     return NULL;
 }

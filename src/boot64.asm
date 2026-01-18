@@ -7,6 +7,8 @@
 ; Multiboot2 passes magic in EAX and info pointer in EBX
 global _start32
 extern _start
+extern __bss_start
+extern __bss_end
 
 ; Page table constants
 PAGE_PRESENT    equ 0x01
@@ -19,10 +21,11 @@ EFER_LME        equ 0x100     ; Long Mode Enable
 
 section .bss
 align 4096
-; Reserve space for page tables (identity map first 4GB using 2MB pages)
+; Reserve space for page tables (identity map first 64GB using 2MB pages)
+; This covers UEFI framebuffers that may be placed above 4GB
 pml4:   resb 4096             ; Page Map Level 4
 pdpt:   resb 4096             ; Page Directory Pointer Table
-pd:     resb 4096 * 4         ; Page Directories (4 for 4GB)
+pd:     resb 4096 * 64        ; Page Directories (64 for 64GB)
 
 ; 64-bit stack
 align 16
@@ -59,13 +62,22 @@ _start32:
     ; Disable interrupts
     cli
 
+    ; Clear entire BSS section (before using anything in it)
+    mov edi, __bss_start
+    mov ecx, __bss_end
+    sub ecx, edi
+    shr ecx, 2                ; Divide by 4 (dwords)
+    xor eax, eax
+    cld
+    rep stosd
+
     ; Set up page tables for identity mapping first 4GB
     ; Using 2MB pages for simplicity
 
     ; Clear page tables
     mov edi, pml4
     xor eax, eax
-    mov ecx, (4096 * 6) / 4   ; Clear all page table memory
+    mov ecx, (4096 * 66) / 4  ; Clear all page table memory (PML4 + PDPT + 64 PDs)
     rep stosd
 
     ; Set up PML4[0] -> PDPT
@@ -74,26 +86,30 @@ _start32:
     or eax, PAGE_PRESENT | PAGE_WRITE
     mov [edi], eax
 
-    ; Set up PDPT[0-3] -> PD[0-3] (for 4GB)
+    ; Set up PDPT[0-63] -> PD[0-63] (for 64GB)
     mov edi, pdpt
     mov eax, pd
     or eax, PAGE_PRESENT | PAGE_WRITE
-    mov [edi], eax            ; PDPT[0] -> PD[0]
-    add eax, 4096
-    mov [edi + 8], eax        ; PDPT[1] -> PD[1]
-    add eax, 4096
-    mov [edi + 16], eax       ; PDPT[2] -> PD[2]
-    add eax, 4096
-    mov [edi + 24], eax       ; PDPT[3] -> PD[3]
+    mov ecx, 64
+.fill_pdpt:
+    mov [edi], eax
+    mov dword [edi + 4], 0    ; Upper 32 bits = 0 (PDs are in low memory)
+    add eax, 4096             ; Next PD
+    add edi, 8
+    loop .fill_pdpt
 
     ; Set up PD entries (512 entries per PD, 2MB each = 1GB per PD)
-    ; Map 4GB total (4 PDs x 512 entries x 2MB = 4GB)
+    ; Map 64GB total (64 PDs x 512 entries x 2MB = 64GB)
+    ; Need to track 64-bit physical address since we go beyond 4GB
     mov edi, pd
-    mov eax, PAGE_PRESENT | PAGE_WRITE | PAGE_SIZE_2MB  ; 2MB page, present, writable
-    mov ecx, 512 * 4          ; 512 entries * 4 PDs
+    xor ebx, ebx              ; Upper 32 bits of physical address
+    mov eax, PAGE_PRESENT | PAGE_WRITE | PAGE_SIZE_2MB  ; Lower 32 bits + flags
+    mov ecx, 512 * 64         ; 512 entries * 64 PDs = 32768 entries
 .fill_pd:
-    mov [edi], eax
+    mov [edi], eax            ; Lower 32 bits
+    mov [edi + 4], ebx        ; Upper 32 bits
     add eax, 0x200000         ; Next 2MB
+    adc ebx, 0                ; Carry into upper 32 bits when crossing 4GB
     add edi, 8
     loop .fill_pd
 

@@ -19,8 +19,10 @@ SECTIONS {
     .data   : ALIGN(4K) { *(.data*) }
 
     .bss : ALIGN(4K) {
+        PROVIDE(__bss_start = .);
         *(.bss*)
         *(COMMON)
+        PROVIDE(__bss_end = .);
     }
 
     PROVIDE(end = .);
