@@ -15,6 +15,8 @@
 #include <proc.h>
 #include <kb.h>
 #include <input.h>
+#include <ata.h>
+#include <vfs.h>
 
 // Display mode (set via Makefile)
 #ifndef FB_FORCE_MODE
@@ -149,6 +151,10 @@ void _start(unsigned long magic, struct multiboot_info *info) {
     pci_init();
 
     acpi_init();
+
+    ata_init();
+
+    vfs_init();
 
     printf("\n");
     printf("  _   _       _                              ___  ____  \n");

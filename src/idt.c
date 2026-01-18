@@ -4,6 +4,7 @@
 #include <syscall.h>
 #include <proc.h>
 #include <kb.h>
+#include <ata.h>
 
 // Exception numbers
 #define T_DIVIDE     0      // Divide error
@@ -149,7 +150,7 @@ static void pic_remap(void) {
     outb(PIC1_DATA, 1);
     outb(PIC2_DATA, 1);
     outb(PIC1_DATA, 0xFD);  // 0xFD = 11111101 - IRQ1 (keyboard) unmasked
-    outb(PIC2_DATA, 0xFF);  // Mask all IRQs on PIC2
+    outb(PIC2_DATA, 0x3F);  // 0x3F = 00111111 - IRQ14,15 (ATA) unmasked
 }
 
 void idt_init(void) {
@@ -197,6 +198,18 @@ void trap(struct trapframe *tf) {
     case 33:  // IRQ1 = keyboard (vector 32 + IRQ1)
         kb_handler(tf);
         outb(PIC1_CMD, 0x20);  // Send EOI
+        return;
+
+    case 46:  // IRQ14 = primary ATA (vector 32 + 14)
+        ata_irq_handler(0);
+        outb(PIC2_CMD, 0x20);  // EOI to slave PIC
+        outb(PIC1_CMD, 0x20);  // EOI to master PIC
+        return;
+
+    case 47:  // IRQ15 = secondary ATA (vector 32 + 15)
+        ata_irq_handler(1);
+        outb(PIC2_CMD, 0x20);
+        outb(PIC1_CMD, 0x20);
         return;
 
     default:
