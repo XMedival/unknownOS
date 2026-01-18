@@ -3,4 +3,6 @@ iso/
 kernel.iso
 kernel.elf
 kernel.bin
+init.elf
 disk.img
+grub.cfg

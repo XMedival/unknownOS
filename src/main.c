@@ -30,24 +30,13 @@ struct multiboot_info {
 }__attribute__((aligned(MULTIBOOT_INFO_ALIGN)));
 
 
-// Custom info request struct with actual requests
-struct inforeq_with_tags {
-  multiboot_uint16_t type;
-  multiboot_uint16_t flags;
-  multiboot_uint32_t size;
-  multiboot_uint32_t requests[7];  // Expanded for framebuffer
-} __attribute__((packed));
+// Multiboot2 header with framebuffer request (0,0,0 = let GRUB choose)
+#define MB_HEADER_SIZE 48
 
-// Calculate header size - this structure is 104 bytes
-// (16 + 16 + 24 + 40 + 8 bytes for each section with alignment)
-#define MB_HEADER_SIZE 104
-
-__attribute__((section(".multiboot2_header"), used,  aligned(MULTIBOOT_HEADER_ALIGN)))
+__attribute__((section(".multiboot2_header"), used, aligned(MULTIBOOT_HEADER_ALIGN)))
 const struct {
   struct multiboot_header header;
-  struct multiboot_header_tag_console_flags cflags __attribute__((aligned(MULTIBOOT_HEADER_ALIGN)));
-  struct multiboot_header_tag_framebuffer fb_req __attribute__((aligned(MULTIBOOT_HEADER_ALIGN)));
-  struct inforeq_with_tags infreq __attribute__((aligned(MULTIBOOT_HEADER_ALIGN)));
+  struct multiboot_header_tag_framebuffer fbtag __attribute__((aligned(MULTIBOOT_HEADER_ALIGN)));
   struct multiboot_header_tag end_tag __attribute__((aligned(MULTIBOOT_HEADER_ALIGN)));
 } header = {
   .header = {
@@ -56,44 +45,13 @@ const struct {
     .header_length = MB_HEADER_SIZE,
     .checksum = (uint32_t)(-(int32_t)(MULTIBOOT2_HEADER_MAGIC + MULTIBOOT_ARCHITECTURE_I386 + MB_HEADER_SIZE)),
   },
-  .cflags = {
-    .type = MULTIBOOT_HEADER_TAG_CONSOLE_FLAGS,
-    .flags = MULTIBOOT_HEADER_TAG_OPTIONAL,
-    .size = sizeof(struct multiboot_header_tag_console_flags),
-    .console_flags = 3,
-  },
-#if FB_FORCE_MODE == 1
-  // .fb_req = {
-    // .type = MULTIBOOT_HEADER_TAG_FRAMEBUFFER,
-    // .flags = MULTIBOOT_HEADER_TAG_OPTIONAL,  // Optional for fallback to text mode
-    // .size = sizeof(struct multiboot_header_tag_framebuffer),
-    // Request text mode (80x25)
-    // .width = 80,
-    // .height = 25,
-    // .depth = 0,      // depth=0 signals text mode preference
-#else
-  .fb_req = {
-    .type = MULTIBOOT_HEADER_TAG_FRAMEBUFFER,
-    .flags = MULTIBOOT_HEADER_TAG_OPTIONAL,  // Optional for fallback to text mode
-    .size = sizeof(struct multiboot_header_tag_framebuffer),
-    .width = 1024,   // Preferred width
-    .height = 768,   // Preferred height
-    .depth = 32,     // Preferred depth
-  },
-#endif
-  .infreq = {
-      .type = MULTIBOOT_HEADER_TAG_INFORMATION_REQUEST,
+  .fbtag = {
+      .type = MULTIBOOT_HEADER_TAG_FRAMEBUFFER,
       .flags = 0,
-      .size = sizeof(struct inforeq_with_tags),
-      .requests = {
-          MULTIBOOT_TAG_TYPE_BOOT_LOADER_NAME,  // type 2
-          MULTIBOOT_TAG_TYPE_MMAP,              // type 6
-          MULTIBOOT_TAG_TYPE_LOAD_BASE_ADDR,    // type 21
-          MULTIBOOT_TAG_TYPE_ACPI_OLD,          // type 14
-          MULTIBOOT_TAG_TYPE_ACPI_NEW,          // type 15
-          MULTIBOOT_TAG_TYPE_MODULE,            // type 3
-          MULTIBOOT_TAG_TYPE_FRAMEBUFFER,       // type 8
-      },
+      .size = sizeof(struct multiboot_header_tag_framebuffer),
+      .width = 1366,
+      .height = 768,
+      .depth = 32,
   },
   .end_tag = {
     .type = MULTIBOOT_TAG_TYPE_END,
@@ -144,7 +102,6 @@ void _start(unsigned long magic, struct multiboot_info *info) {
 
     // Verify multiboot2 magic
     if (magic != MULTIBOOT2_BOOTLOADER_MAGIC) {
-        // Can't use printf yet, just halt
         for(;;) asm("hlt");
     }
 

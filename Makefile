@@ -18,10 +18,13 @@ OUTDIR := build
 SRCDIR := src
 LIBCDIR := src/libc
 USERDIR := user
+LIMINE_DIR := limine
 
-ISO := kernel.iso
-KERNEL := kernel.elf
-INIT := init.elf
+# All outputs go to build/
+ISO := $(OUTDIR)/kernel.iso
+KERNEL := $(OUTDIR)/kernel.elf
+INIT := $(OUTDIR)/init.elf
+ISODIR := $(OUTDIR)/iso
 DISK := disk.img
 DISKSIZE := 2G
 
@@ -55,12 +58,22 @@ $(INIT): $(OUTDIR)/user/init.o
 $(OUTDIR)/user:
 	@mkdir -p $(OUTDIR)/user
 
-$(ISO): $(KERNEL) $(INIT) grub.cfg
-	@mkdir -p iso/boot/grub/
-	@cp grub.cfg iso/boot/grub/
-	@cp $(KERNEL) iso/boot/
-	@cp $(INIT) iso/boot/
-	@grub-mkrescue iso -o $@
+$(ISO): $(KERNEL) $(INIT) limine.conf
+	@mkdir -p $(ISODIR)/boot $(ISODIR)/EFI/BOOT
+	@cp $(KERNEL) $(ISODIR)/boot/
+	@cp $(INIT) $(ISODIR)/boot/
+	@cp limine.conf $(ISODIR)/
+	@cp $(LIMINE_DIR)/limine-bios.sys $(ISODIR)/
+	@cp $(LIMINE_DIR)/limine-bios-cd.bin $(ISODIR)/
+	@cp $(LIMINE_DIR)/limine-uefi-cd.bin $(ISODIR)/
+	@cp $(LIMINE_DIR)/BOOTX64.EFI $(ISODIR)/EFI/BOOT/
+	@cp $(LIMINE_DIR)/BOOTIA32.EFI $(ISODIR)/EFI/BOOT/
+	@xorriso -as mkisofs -b limine-bios-cd.bin \
+		-no-emul-boot -boot-load-size 4 -boot-info-table \
+		--efi-boot limine-uefi-cd.bin \
+		-efi-boot-part --efi-boot-image --protective-msdos-label \
+		$(ISODIR) -o $@
+	@$(LIMINE_DIR)/limine bios-install $@
 
 $(DISK):
 	@qemu-img create $@ $(DISKSIZE)
@@ -69,7 +82,7 @@ run: $(ISO) $(DISK)
 	@qemu-system-x86_64 -m 512 -cdrom $(ISO) -machine acpi=on -device e1000 -hda $(DISK) $(QEMUEXTRA)
 
 clean:
-	@rm -rf $(OUTDIR) $(ISO) $(KERNEL) $(INIT)
+	@rm -rf $(OUTDIR)
 
 $(OUTDIR):
 	@mkdir -p $(OUTDIR)
