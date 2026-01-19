@@ -4,6 +4,8 @@
 #include <fb.h>
 #include <serial.h>
 #include <stdarg.h>
+#include <vt.h>
+#include <tty.h>
 
 extern uint xpos;
 extern uint ypos;
@@ -56,9 +58,14 @@ void itoa(char *buf, int base, int d) {
     itoa64(buf, base == 'x' ? 16 : 10, (uint64_t)(unsigned int)d, base == 'd');
 }
 
-// putchar now uses framebuffer driver
+// putchar routes through TTY when available, falls back to framebuffer
 void putchar(int c) {
-    fb_putchar(c);
+    if (active_vt && active_vt->tty) {
+        char ch = (char)c;
+        tty_write(active_vt->tty, &ch, 1);
+    } else {
+        fb_putchar(c);  // Fallback before VT/TTY init
+    }
 }
 
 static void ftoa(char *out, double x, int prec) {

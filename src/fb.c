@@ -562,11 +562,52 @@ int fb_is_scrolled(void) {
     return scroll_buf.view_offset > 0;
 }
 
+// Public drawing functions for VT subsystem
+void fb_draw_char_at(uint col, uint row, int c, uint fg, uint bg) {
+    fb_draw_char(col, row, (uchar)c, fg, bg);
+}
+
+void fb_get_text_dimensions(uint *cols, uint *rows) {
+    if (cols) *cols = fb.text_cols;
+    if (rows) *rows = fb.text_rows;
+}
+
+// Check if VT system is active (from vt.c)
+struct vt_struct;
+extern struct vt_struct *active_vt;
+
+// Get scroll buffer line count for VT migration
+uint fb_get_scroll_line_count(void) {
+    return scroll_buf.total_lines;
+}
+
+// Get a line from scroll buffer (returns length, -1 if invalid)
+int fb_get_scroll_line(uint idx, char *buf, uint bufsize, uint *fg, uint *bg) {
+    struct scroll_line *line = fb_scroll_get_line(idx);
+    if (!line) return -1;
+
+    uint len = line->len;
+    if (len >= bufsize) len = bufsize - 1;
+
+    for (uint i = 0; i < len; i++) {
+        buf[i] = line->text[i];
+    }
+    buf[len] = '\0';
+
+    if (fg) *fg = line->fg_color;
+    if (bg) *bg = line->bg_color;
+
+    return (int)line->len;
+}
+
 // Scroll key handler
 static void scroll_input_handler(struct key_event *ev, void *ctx) {
     (void)ctx;
 
     if (!ev->pressed) return;
+
+    // If VT system is active, let it handle scrolling
+    if (active_vt) return;
 
     switch (ev->keycode) {
     case KEY_PGUP:

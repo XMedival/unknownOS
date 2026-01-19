@@ -132,3 +132,6 @@ int vfs_register_fs(struct vfs_filesystem *fs);
 
 // Get root node
 struct vfs_node *vfs_get_root(void);
+
+// Device node helpers
+int vfs_add_device(struct vfs_node *parent, struct vfs_node *device);

@@ -568,3 +568,13 @@ int vfs_register_fs(struct vfs_filesystem *fs) {
 struct vfs_node *vfs_get_root(void) {
     return vfs_root;
 }
+
+int vfs_add_device(struct vfs_node *parent, struct vfs_node *device) {
+    if (!parent || !device)
+        return -1;
+
+    if (!(parent->type & VFS_DIRECTORY))
+        return -1;
+
+    return rootfs_add_child(parent, device);
+}

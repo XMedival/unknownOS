@@ -18,6 +18,11 @@
 #include <ata.h>
 #include <vfs.h>
 #include <ext2.h>
+#include <vt.h>
+#include <tty.h>
+
+// TTY device init (from tty_dev.c)
+extern void tty_dev_init(void);
 
 // Display mode (set via Makefile)
 #ifndef FB_FORCE_MODE
@@ -157,6 +162,11 @@ void _start(unsigned long magic, struct multiboot_info *info) {
 
     vfs_init();
     ext2_init();
+
+    // Initialize VT/TTY subsystem
+    vt_init();
+    tty_init();
+    tty_dev_init();
 
     if (ext2_mount(0, "/mnt") == 0) {
         LOG_OK("ext2 mounted at /mnt");

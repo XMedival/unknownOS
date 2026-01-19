@@ -90,3 +90,11 @@ void fb_scroll_up(uint n);           // Scroll back n lines
 void fb_scroll_down(uint n);         // Scroll forward n lines
 void fb_scroll_to_bottom(void);      // Return to live output
 int fb_is_scrolled(void);            // Returns 1 if viewing history
+
+// Low-level drawing for VT subsystem
+void fb_draw_char_at(uint col, uint row, int c, uint fg, uint bg);
+void fb_get_text_dimensions(uint *cols, uint *rows);
+
+// Get scroll buffer content for VT migration
+uint fb_get_scroll_line_count(void);
+int fb_get_scroll_line(uint idx, char *buf, uint bufsize, uint *fg, uint *bg);
