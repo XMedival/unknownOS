@@ -17,6 +17,7 @@
 #include <input.h>
 #include <ata.h>
 #include <vfs.h>
+#include <ext2.h>
 
 // Display mode (set via Makefile)
 #ifndef FB_FORCE_MODE
@@ -155,21 +156,39 @@ void _start(unsigned long magic, struct multiboot_info *info) {
     ata_init();
 
     vfs_init();
+    ext2_init();
 
-    printf("\n");
-    printf("  _   _       _                              ___  ____  \n");
-    printf(" | | | |_ __ | | ___ __   _____      ___ __ / _ \\/ ___| \n");
-    printf(" | | | | '_ \\| |/ / '_ \\ / _ \\ \\ /\\ / / '_  | | | \\___ \\ \n");
-    printf(" | |_| | | | |   <| | | | (_) \\ V  V /| | | | |_| |___) |\n");
-    printf("  \\___/|_| |_|_|\\_\\_| |_|\\___/ \\_/\\_/ |_| |_|\\___/|____/ \n");
-    printf("\n");
-    printf("\n");
-    printf("  _   _       _                              ___  ____  \n");
-    printf(" | | | |_ __ | | ___ __   _____      ___ __ / _ \\/ ___| \n");
-    printf(" | | | | '_ \\| |/ / '_ \\ / _ \\ \\ /\\ / / '_  | | | \\___ \\ \n");
-    printf(" | |_| | | | |   <| | | | (_) \\ V  V /| | | | |_| |___) |\n");
-    printf("  \\___/|_| |_|_|\\_\\_| |_|\\___/ \\_/\\_/ |_| |_|\\___/|____/ \n");
-    printf("\n");
+    if (ext2_mount(0, "/mnt") == 0) {
+        LOG_OK("ext2 mounted at /mnt");
+
+        // List directory contents
+        int fd = vfs_open("/mnt", O_RDONLY);
+        if (fd >= 0) {
+            LOG_INFO("Directory listing of /mnt:");
+            struct vfs_dirent *entry;
+            for (int i = 0; (entry = vfs_readdir(fd, i)) != NULL; i++) {
+                LOG_INFO("  %s", entry->name);
+            }
+            vfs_close(fd);
+        }
+
+        // Read test.txt
+        fd = vfs_open("/mnt/test.txt", O_RDONLY);
+        if (fd >= 0) {
+            char buf[512];
+            int n = vfs_read(fd, buf, sizeof(buf) - 1);
+            if (n > 0) {
+                buf[n] = '\0';
+                LOG_INFO("Contents of /mnt/test.txt:");
+                LOG_INFO("  %s", buf);
+            } else {
+                LOG_WARN("Failed to read test.txt (n=%d)", n);
+            }
+            vfs_close(fd);
+        } else {
+            LOG_WARN("Could not open /mnt/test.txt");
+        }
+    }
 
     printf("\n--- Running User Process ---\n");
 

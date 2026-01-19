@@ -28,6 +28,9 @@ ISODIR := $(OUTDIR)/iso
 DISK := disk.img
 DISKSIZE := 2G
 
+$(LIMINE_DIR)/limine:
+	make -C $(LIMINE_DIR)
+
 OBJS := $(patsubst $(SRCDIR)/%.c,$(OUTDIR)/%.o,$(wildcard $(SRCDIR)/*.c)) \
 	$(patsubst $(SRCDIR)/%.asm,$(OUTDIR)/%.o,$(wildcard $(SRCDIR)/*.asm)) \
 	$(patsubst $(LIBCDIR)/%.c,$(OUTDIR)/libc/%.o,$(wildcard $(LIBCDIR)/*.c)) \
